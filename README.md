@@ -97,6 +97,32 @@ lo sviluppo il percorso previsto.
 > posizione fornita dal dispositivo, senza alcun aggancio alla rete stradale.
 > Un test lo verifica.
 
+### Rete ROAD SENSE — simulazione visiva (solo demo)
+
+Durante la demo due **veicoli ROAD SENSE simulati** percorrono lo stesso
+tracciato, un po' più avanti. Attraversando una buca la rilevano (impulso
+ambra sul marker, etichetta `BUCA RILEVATA`) e l'evento compare sulla mappa.
+Il veicolo principale, arrivando dopo, riceve l'avviso.
+
+```
+UN VEICOLO RILEVA → ROAD SENSE CONDIVIDE
+                  → UN ALTRO PASSAGGIO CONFERMA
+                  → IL VEICOLO CHE ARRIVA VIENE AVVISATO
+```
+
+**Un solo rilevamento non basta.** È il `ConfidenceEngine` vero a deciderlo:
+una singola rilevazione automatica resta sotto la soglia di allerta (~0,26) e
+compare in mappa come *possibile*, con marker tratteggiato. Quando il secondo
+veicolo conferma lo stesso punto, la confidenza sale sopra la soglia (~0,39) e
+l'avviso scatta. **Nessun numero è scritto a mano**: gli eventi prodotti dai
+veicoli simulati sono normali `RoadEvent`, con severità e confidenza calcolate
+dalle stesse funzioni del `DetectionEngine`.
+
+> **Non esiste alcuna rete.** Nessuna API, nessun backend, nessuna connessione:
+> i veicoli avanzano in memoria. Non sono «utenti collegati» e non vanno
+> chiamati così: sono **veicoli ROAD SENSE · SIMULATI**, come dice la legenda
+> sulla mappa. I test lo verificano.
+
 ### ROAD WEATHER — simulazione visiva (solo demo)
 
 La demo mostra anche come potrebbe funzionare un'integrazione futura con una
@@ -413,6 +439,7 @@ Coprono la logica critica e i percorsi degradati:
 - `degradation.test.ts` — sensori mancanti, compensazione orientamento, backend assente, stub
 - `demoRoute.test.ts` — validità del tracciato, moto lungo le strade, velocità e direzione, eventi sulla carreggiata, riavvio del giro, GPS reale non toccato
 - `weather.test.ts` — meteo assente fuori dalla demo, nessuna richiesta di rete, stub NOWCAST inerte, aree che intersecano il percorso, distanze di preavviso, correlazione fra sorgenti
+- `demoTraffic.test.ts` — veicoli simulati assenti fuori dalla demo, nessuna richiesta di rete, percorsi stradali, rilevamento nel punto e nel momento giusti, conferma che alza davvero la confidenza
 - `demoPipeline.test.ts` — catena completa in DEMO MODE a tempo simulato
 
 ---

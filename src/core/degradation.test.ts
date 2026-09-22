@@ -145,8 +145,10 @@ describe('modalita\' demo', () => {
     expect(events.every((e) => e.demo === true)).toBe(true);
 
     const clusters = buildClusters(events);
-    // Cinque punti distinti lungo l'anello.
-    expect(clusters).toHaveLength(5);
+    // Un punto distinto per ogni categoria pre-seminata. La buca non c'e':
+    // in demo viene rilevata dal vivo dai veicoli simulati.
+    expect(clusters).toHaveLength(4);
+    expect(clusters.some((c) => c.type === 'pothole')).toBe(false);
     // Il punto con piu' segnalatori indipendenti deve risultare piu' affidabile.
     const sorted = [...clusters].sort((a, b) => b.reporters - a.reporters);
     expect(sorted[0]!.confidence).toBeGreaterThan(sorted[sorted.length - 1]!.confidence);

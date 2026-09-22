@@ -275,6 +275,44 @@ export const DEMO = {
   /** Rumore di fondo dell'asfalto simulato, ampiezza in m/s^2. */
   roadNoise: 1.2,
   /**
+   * RETE ROAD SENSE SIMULATA.
+   *
+   * Due veicoli fittizi percorrono lo stesso tracciato del veicolo
+   * principale, leggermente davanti a lui, e rilevano una buca che il
+   * principale incontrera' dopo. Serve a mostrare la catena:
+   *   un veicolo rileva -> ROAD SENSE condivide -> un altro viene avvisato
+   *   -> un ulteriore passaggio conferma.
+   *
+   * NON esiste alcuna rete reale: nessuna API, nessun backend, nessuna
+   * connessione. Gli eventi prodotti sono normali RoadEvent marcati `demo`,
+   * e la confidenza sale attraverso il ConfidenceEngine vero.
+   */
+  network: {
+    /** Punto in cui i veicoli simulati rilevano la buca, frazione del percorso. */
+    potholeAt: 0.05,
+    /** Frequenza di aggiornamento dei veicoli simulati, ms. */
+    tickMs: 250,
+    /** Durata del lampeggio "BUCA RILEVATA" sul veicolo, ms. */
+    flashMs: 2600,
+    /**
+     * I veicoli partono DAVANTI al principale, a velocita' costante: cosi'
+     * incontrano la buca prima di lui, che e' il presupposto della
+     * narrazione. Le distanze sono in metri dall'inizio del tracciato.
+     */
+    vehicles: [
+      { id: 'demo-veh-a', startDistanceM: 270, speedMps: 12 },
+      { id: 'demo-veh-b', startDistanceM: 220, speedMps: 11 },
+    ],
+    /**
+     * Impulso del rilevamento simulato. Un picco di 9.5 m/s^2 corrisponde a
+     * una buca profonda: e' voluto, perche' la soglia di allerta non venga
+     * superata artificialmente ma per merito della severita' reale
+     * dell'evento e della concordanza fra due veicoli.
+     */
+    detection: { peak: 9.5, impulseMs: 150, baselineRms: 0.4, speedMps: 11 },
+  },
+
+  /**
    * Anomalie lungo il percorso, come frazione della lunghezza totale.
    * `peak` e' il picco verticale in m/s^2, `durationMs` la durata dell'impulso.
    */
@@ -313,6 +351,13 @@ export const WEATHER = {
   displayMs: 10_000,
   /** Non ripetere lo stesso avviso prima di questo intervallo, ms. */
   cooldownMs: 180_000,
+  /**
+   * Intervallo minimo fra due avvisi meteo QUALSIASI.
+   * Senza questo, appena scade un avviso ne parte subito un altro e la mappa
+   * diventa un bollettino: il meteo deve restare un contorno, non il
+   * contenuto principale.
+   */
+  minGapMs: 25_000,
   /**
    * Raggio entro cui un evento stradale viene considerato correlato alla
    * cella meteo. E' il cuore dell'idea: due sorgenti indipendenti che

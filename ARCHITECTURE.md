@@ -433,6 +433,18 @@ hanno un motore proprio (`weather/weatherAlerts.ts`) e non toccano
 `AlertEngine`: un evento stradale è un punto da annunciare a qualche centinaio
 di metri, una cella meteo è un'area in movimento da annunciare a chilometri.
 
+**Rete simulata.** `DemoVehicle` e `DemoTrafficProvider` in `src/demo/` fanno
+avanzare due veicoli fittizi sullo stesso tracciato. Gli eventi che producono
+sono normali `RoadEvent` con un proprio identificatore anonimo, calcolati con
+`severityFromPeak` e `singleDetectionConfidence` — le funzioni vere del
+`DetectionEngine`. La confidenza cresce perché due segnalatori indipendenti
+concordano, non perché un numero venga scritto a mano.
+
+Conseguenza che vale la pena notare: **un solo rilevamento automatico non
+supera la soglia di allerta**, e la demo lo rispetta invece di aggirarlo.
+Serve la conferma del secondo veicolo. È il comportamento voluto di ROAD
+SENSE — un singolo scossone non è una buca — e un test lo fissa.
+
 **Smart tyre.** `VehicleSample` in `SensorProvider.ts` prevede pressione,
 temperatura, indice di aderenza e un riferimento **tecnico** del sensore (mai
 riferibile a una persona). Basta implementare un provider.

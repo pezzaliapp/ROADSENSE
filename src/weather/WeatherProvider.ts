@@ -48,6 +48,12 @@ export interface WeatherCell {
    * attendibile.
    */
   correlatesWith?: 'water' | 'slippery';
+  /**
+   * Se false la cella viene DISEGNATA sulla mappa ma non genera mai un avviso.
+   * Serve a tenere la narrazione semplice: si vede che il fenomeno esiste,
+   * senza moltiplicare i banner.
+   */
+  announce: boolean;
   /** Sempre true nella v0.1.0: sono dati simulati. */
   simulated: true;
 }

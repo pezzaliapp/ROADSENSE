@@ -107,9 +107,12 @@ export function isCellRelevant(
  */
 export class WeatherAlertEngine {
   private lastAlertAt = new Map<string, number>();
+  /** Istante dell'ultimo avviso meteo, di qualunque cella. */
+  private lastAnyAlertAt = Number.NEGATIVE_INFINITY;
 
   reset(): void {
     this.lastAlertAt.clear();
+    this.lastAnyAlertAt = Number.NEGATIVE_INFINITY;
   }
 
   evaluate(
@@ -118,9 +121,14 @@ export class WeatherAlertEngine {
     roadClusters: readonly EventCluster[],
     now: number = Date.now(),
   ): WeatherAlert | null {
+    // Il meteo non deve incalzare: fra due avvisi passa un intervallo minimo.
+    if (now - this.lastAnyAlertAt < WEATHER.minGapMs) return null;
+
     let best: { cell: WeatherCell; distanceM: number; reporters: number } | null = null;
 
     for (const cell of cells) {
+      // Le celle con `announce: false` si vedono sulla mappa ma non avvisano.
+      if (!cell.announce) continue;
       const relevant = isCellRelevant(cell, driver);
       if (!relevant) continue;
       const last = this.lastAlertAt.get(cell.id);
@@ -148,6 +156,7 @@ export class WeatherAlertEngine {
 
     if (!best) return null;
     this.lastAlertAt.set(best.cell.id, now);
+    this.lastAnyAlertAt = now;
 
     return {
       cell: best.cell,

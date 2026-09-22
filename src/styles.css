@@ -311,24 +311,129 @@ button {
   display: inline-block;
 }
 
-/* Etichetta permanente: i dati meteo mostrati sono simulati.
-   Sta SOPRA la riga di attribuzione e non la copre mai: l'attribuzione della
-   cartografia e' un obbligo di licenza, non un dettaglio estetico. */
-.sim-badge {
+/* ---------- veicoli ROAD SENSE simulati (solo demo) ---------- */
+
+/* Deliberatamente piu' piccoli e spenti del veicolo principale: la mappa deve
+   dire a colpo d'occhio chi sei tu e chi sono gli altri. */
+.rs-peer-wrap {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+}
+
+.rs-peer {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #8b97a5;
+  border: 2px solid #0b0e11;
+}
+
+.rs-peer-arrow {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+}
+
+.rs-peer-arrow::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  width: 0;
+  height: 0;
+  margin-left: -4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 7px solid #8b97a5;
+}
+
+/* Alone colorato quando il veicolo si trova dentro un'area meteo. */
+.rs-peer-halo {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+/* Rilevamento: un breve impulso sul marker, non un pannello. */
+.rs-peer-wrap.detecting .rs-peer {
+  background: var(--accent);
+  animation: rs-pulse 0.9s ease-out infinite;
+}
+
+.rs-peer-wrap.detecting .rs-peer-arrow::before { border-bottom-color: var(--accent); }
+
+@keyframes rs-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 176, 32, 0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(255, 176, 32, 0); }
+}
+
+.rs-peer-flash {
+  position: absolute;
+  /* Centrata SOPRA il veicolo, non di lato: affiancata usciva dallo schermo
+     ogni volta che il veicolo si trovava sul bordo destro della mappa. */
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(11, 14, 17, 0.9);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+/* ---------- legenda della demo ---------- */
+
+.demo-legend {
   position: absolute;
   left: 12px;
   bottom: 34px;
   z-index: 400;
-  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
   border-radius: 4px;
   background: rgba(11, 14, 17, 0.8);
   border: 1px solid var(--line);
-  color: #7f8b99;
-  font-size: 9px;
-  letter-spacing: 0.14em;
-  font-weight: 600;
   pointer-events: none;
 }
+
+.demo-legend .row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #8b97a5;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.demo-legend .row.sim { color: #6f7b88; }
+
+.demo-legend .k {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.demo-legend .k.me { background: #3da5ff; }
+.demo-legend .k.peer { background: #8b97a5; margin-left: 6px; }
+
+/* Etichetta permanente: i dati meteo mostrati sono simulati.
+   Ora e' una riga della legenda della demo, qui sopra. */
 
 /* ---------- barra comandi ---------- */
 

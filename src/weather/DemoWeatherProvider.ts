@@ -41,6 +41,8 @@ interface CellSpec {
   etaMin: number;
   severity: 1 | 2 | 3;
   correlatesWith?: 'water' | 'slippery';
+  /** false = area visibile sulla mappa, ma nessun banner. */
+  announce: boolean;
 }
 
 /**
@@ -51,7 +53,9 @@ interface CellSpec {
  *     gia' segnalazioni di acqua: e' l'esempio della CORRELAZIONE fra due
  *     sorgenti indipendenti, ed e' il primo avviso che compare;
  *  2. la GRANDINE e' l'esempio del preavviso puro, senza conferme dalla strada;
- *  3. il DOWNBURST resta visibile sulla mappa senza affollare gli avvisi.
+ *  3. il DOWNBURST resta visibile sulla mappa ma NON genera alcun banner
+ *     (`announce: false`): mostra che il fenomeno c'e' senza allungare la
+ *     narrazione.
  *
  * NOTA sulla geometria: l'anello di Milano e' compatto (poco piu' di un
  * chilometro di diametro) e si ripiega su se' stesso, quindi la distanza in
@@ -73,6 +77,7 @@ const SPECS: CellSpec[] = [
     etaMin: 4,
     severity: 3,
     correlatesWith: 'water',
+    announce: true,
   },
   {
     id: 'demo-hail',
@@ -85,6 +90,7 @@ const SPECS: CellSpec[] = [
     driftSpeedMps: 11,
     etaMin: 8,
     severity: 3,
+    announce: true,
   },
   {
     id: 'demo-downburst',
@@ -97,6 +103,9 @@ const SPECS: CellSpec[] = [
     driftSpeedMps: 9,
     etaMin: 14,
     severity: 2,
+    // Visibile sulla mappa, ma senza banner: la narrazione resta a tre tempi
+    // (pioggia correlata, evento stradale, grandine).
+    announce: false,
   },
 ];
 
@@ -127,6 +136,7 @@ export class DemoWeatherProvider implements WeatherProvider {
         driftSpeedMps: spec.driftSpeedMps,
         etaMin: spec.etaMin,
         severity: spec.severity,
+        announce: spec.announce,
         ...(spec.correlatesWith ? { correlatesWith: spec.correlatesWith } : {}),
         simulated: true as const,
       };

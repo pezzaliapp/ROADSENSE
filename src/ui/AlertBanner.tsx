@@ -12,10 +12,16 @@ import { confidenceLevel } from '../core/ConfidenceEngine';
 
 interface Props {
   alert: ActiveAlert | null;
+  /**
+   * In DEMO MODE le segnalazioni provengono da veicoli simulati, e va detto:
+   * "segnalazioni" farebbe pensare a persone reali dietro a una rete che non
+   * esiste ancora.
+   */
+  demo?: boolean;
   onDismiss: () => void;
 }
 
-export function AlertBanner({ alert, onDismiss }: Props) {
+export function AlertBanner({ alert, demo = false, onDismiss }: Props) {
   if (!alert) return null;
   const meta = EVENT_META[alert.cluster.type];
   const level = confidenceLevel(alert.cluster.confidence);
@@ -40,8 +46,15 @@ export function AlertBanner({ alert, onDismiss }: Props) {
           {prefix ? meta.label.toLowerCase() : meta.label} tra {formatDistance(alert.distanceM)}
         </div>
         <div className="a-sub">
-          AFFIDABILITA' {Math.round(alert.cluster.confidence * 100)}% ·{' '}
-          {alert.cluster.reporters === 1 ? '1 SEGNALAZIONE' : `${alert.cluster.reporters} SEGNALAZIONI`}
+          {demo
+            ? `${alert.cluster.reporters} ${
+                alert.cluster.reporters === 1 ? 'VEICOLO' : 'VEICOLI'
+              } ROAD SENSE · SIMULATO`
+            : `${alert.cluster.reporters} ${
+                alert.cluster.reporters === 1 ? 'SEGNALAZIONE' : 'SEGNALAZIONI'
+              }`}
+          {' · '}
+          AFFIDABILITA' {Math.round(alert.cluster.confidence * 100)}%
         </div>
       </div>
     </div>

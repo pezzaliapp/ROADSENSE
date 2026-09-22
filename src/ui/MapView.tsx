@@ -58,6 +58,18 @@ import type { EventCluster } from '../core/types';
 import type { AreaOverlay } from './areaOverlay';
 import { EVENT_META } from './eventMeta';
 
+/** Veicolo secondario disegnato sulla mappa. */
+export interface PeerVehicle {
+  id: string;
+  lat: number;
+  lon: number;
+  heading: number;
+  /** Etichetta temporanea accanto al veicolo, es. "BUCA RILEVATA". */
+  flash?: string | null;
+  /** Colore dell'alone quando il veicolo si trova dentro un'area. */
+  halo?: string | null;
+}
+
 interface Props {
   clusters: readonly EventCluster[];
   position: { lat: number; lon: number } | null;
@@ -86,6 +98,12 @@ interface Props {
    * per le celle meteo simulate; per rimuoverle basta non passare la prop.
    */
   areaOverlays?: readonly AreaOverlay[] | null;
+  /**
+   * Altri veicoli da disegnare, piu' piccoli e discreti di quello principale.
+   * Nella v0.1.0 li usa solo la DEMO MODE per i veicoli ROAD SENSE simulati;
+   * per rimuoverli basta non passare la prop.
+   */
+  peerVehicles?: readonly PeerVehicle[] | null;
   onMapMovedByUser?: () => void;
 }
 
@@ -124,6 +142,7 @@ export function MapView({
   followZoom: followZoomProp,
   routeOverlay,
   areaOverlays,
+  peerVehicles,
   onMapMovedByUser,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -133,6 +152,7 @@ export function MapView({
   const meRef = useRef<Marker | null>(null);
   const meElRef = useRef<HTMLDivElement | null>(null);
   const areaMarkersRef = useRef<Map<string, Marker>>(new Map());
+  const peerMarkersRef = useRef<Map<string, { marker: Marker; el: HTMLDivElement }>>(new Map());
   const firstFixRef = useRef(false);
 
   // -- inizializzazione (una sola volta) -----------------------------------
@@ -347,6 +367,70 @@ export function MapView({
       if (map.getSource(SOURCE)) map.removeSource(SOURCE);
     };
   }, [routeOverlay]);
+
+  // -- altri veicoli (rimovibili: basta non passare `peerVehicles`) ---------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const markers = peerMarkersRef.current;
+    const seen = new Set<string>();
+
+    for (const v of peerVehicles ?? []) {
+      seen.add(v.id);
+      let entry = markers.get(v.id);
+
+      if (!entry) {
+        const el = document.createElement('div');
+        el.className = 'rs-peer-wrap';
+        const halo = document.createElement('div');
+        halo.className = 'rs-peer-halo';
+        const arrow = document.createElement('div');
+        arrow.className = 'rs-peer-arrow';
+        const dot = document.createElement('div');
+        dot.className = 'rs-peer';
+        const flash = document.createElement('div');
+        flash.className = 'rs-peer-flash';
+        el.append(halo, arrow, dot, flash);
+        entry = { marker: new Marker({ element: el }).setLngLat([v.lon, v.lat]).addTo(map), el };
+        markers.set(v.id, entry);
+      } else {
+        entry.marker.setLngLat([v.lon, v.lat]);
+      }
+
+      const arrow = entry.el.querySelector<HTMLElement>('.rs-peer-arrow');
+      if (arrow) arrow.style.transform = `rotate(${v.heading}deg)`;
+
+      const halo = entry.el.querySelector<HTMLElement>('.rs-peer-halo');
+      if (halo) {
+        halo.style.borderColor = v.halo ?? 'transparent';
+        halo.style.opacity = v.halo ? '1' : '0';
+      }
+
+      const flash = entry.el.querySelector<HTMLElement>('.rs-peer-flash');
+      if (flash) {
+        // textContent, mai innerHTML: nessun contenuto interpretato come markup.
+        flash.textContent = v.flash ?? '';
+        flash.hidden = !v.flash;
+      }
+      entry.el.classList.toggle('detecting', Boolean(v.flash));
+    }
+
+    for (const [id, entry] of markers) {
+      if (!seen.has(id)) {
+        entry.marker.remove();
+        markers.delete(id);
+      }
+    }
+  }, [peerVehicles]);
+
+  // I marker dei veicoli vanno rimossi quando la mappa viene smontata.
+  useEffect(() => {
+    const markers = peerMarkersRef.current;
+    return () => {
+      for (const entry of markers.values()) entry.marker.remove();
+      markers.clear();
+    };
+  }, []);
 
   // -- aree generiche (rimovibili: basta non passare `areaOverlays`) --------
   const areaKey = useMemo(

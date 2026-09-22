@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ALERT, API, APP, MAP, PRIVACY, SENSORS, WEATHER } from './config/config';
+import { ALERT, API, APP, MAP, MERGE_RADIUS_M, PRIVACY, SENSORS, WEATHER } from './config/config';
 import { AlertEngine, type ActiveAlert } from './core/AlertEngine';
 import { buildClusters } from './core/ConfidenceEngine';
 import { DetectionEngine } from './core/DetectionEngine';
@@ -20,10 +20,13 @@ import { SensorEngine, type EngineSample } from './core/SensorEngine';
 import { getAnonId, newEventId } from './core/anonId';
 import { buildDemoEvents } from './core/demoSeed';
 import { distanceM, roundCoord } from './core/geo';
+import { WEATHER_META } from './ui/weatherMeta';
 import { PhoneSensorProvider } from './core/sensors/PhoneSensorProvider';
 import { DemoSensorProvider } from './core/sensors/DemoSensorProvider';
 import { DEMO_ROUTE } from './demo/demoRoute';
 import { DEMO_ROUTE_CENTER } from './demo/demoRoute';
+import { DemoTrafficProvider } from './demo/DemoTrafficProvider';
+import type { DemoVehicleState } from './demo/DemoVehicle';
 import type { EventCluster, EventType, GeoSample, RoadEvent, SystemStatus } from './core/types';
 import { backendEnabled, fetchNearby, postEvents } from './net/api';
 
@@ -32,6 +35,7 @@ import { WeatherAlertEngine, type WeatherAlert } from './weather/weatherAlerts';
 import type { WeatherCell } from './weather/WeatherProvider';
 
 import { AlertBanner } from './ui/AlertBanner';
+import type { PeerVehicle } from './ui/MapView';
 import { WeatherBanner } from './ui/WeatherBanner';
 import { weatherCellsToOverlays } from './ui/weatherOverlay';
 import { MapView } from './ui/MapView';
@@ -55,6 +59,7 @@ export default function App() {
   const [alert, setAlert] = useState<ActiveAlert | null>(null);
   const [weatherAlert, setWeatherAlert] = useState<WeatherAlert | null>(null);
   const [weatherCells, setWeatherCells] = useState<readonly WeatherCell[]>([]);
+  const [peers, setPeers] = useState<readonly DemoVehicleState[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
@@ -94,6 +99,25 @@ export default function App() {
     const next = buildClusters(store.all());
     setClusters(next);
     alertRef.current.prune(new Set(next.map((c) => c.id)));
+
+    // Se un avviso e' gia' sullo schermo e la sua zona nel frattempo e'
+    // cambiata - per esempio un altro veicolo ha confermato la buca - il
+    // banner si aggiorna invece di restare fermo su un dato vecchio.
+    // Il cluster viene ritrovato per vicinanza: aggiungendo un rilevamento il
+    // baricentro si sposta di qualche metro, e con esso il suo identificativo.
+    const shown = roadAlertRef.current;
+    if (shown) {
+      const updated = next.find(
+        (c) =>
+          c.type === shown.cluster.type &&
+          distanceM(c, shown.cluster) <= MERGE_RADIUS_M[c.type],
+      );
+      if (updated && updated.reporters !== shown.cluster.reporters) {
+        const refreshed = { ...shown, cluster: updated };
+        roadAlertRef.current = refreshed;
+        setAlert(refreshed);
+      }
+    }
   }, []);
 
   // -- inizializzazione dello store (cambia con la modalita' demo) ----------
@@ -145,6 +169,27 @@ export default function App() {
       setWeatherCells([]);
     };
   }, [demo]);
+
+  // -- veicoli ROAD SENSE SIMULATI: esclusivamente in DEMO MODE ------------
+  // Fuori dalla demo il provider non viene nemmeno costruito. Non esiste
+  // alcuna rete: i veicoli avanzano in memoria e i loro eventi finiscono nello
+  // stesso archivio locale, dove il ConfidenceEngine li aggrega come farebbe
+  // con qualsiasi altro segnalatore.
+  useEffect(() => {
+    if (!demo || !running) {
+      setPeers([]);
+      return;
+    }
+    const traffic = new DemoTrafficProvider();
+    traffic.start({
+      onVehicles: (vehicles) => setPeers(vehicles),
+      onEvent: (event) => storeRef.current?.add([event]),
+    });
+    return () => {
+      traffic.stop();
+      setPeers([]);
+    };
+  }, [demo, running]);
 
   // -- purge periodico: applica i TTL e fa decadere la confidenza -----------
   useEffect(() => {
@@ -377,6 +422,29 @@ export default function App() {
 
   const weatherOverlays = useMemo(() => weatherCellsToOverlays(weatherCells), [weatherCells]);
 
+  /**
+   * Veicoli simulati pronti per la mappa. Chi si trova dentro un'area meteo
+   * riceve un alone del colore di quell'area: si capisce a colpo d'occhio che
+   * il fenomeno interessa piu' veicoli, senza moltiplicare i banner.
+   */
+  const peerVehicles = useMemo<PeerVehicle[]>(
+    () =>
+      peers.map((v) => {
+        const inside = weatherCells.find(
+          (c) => distanceM(v, { lat: c.lat, lon: c.lon }) <= c.radiusM,
+        );
+        return {
+          id: v.id,
+          lat: v.lat,
+          lon: v.lon,
+          heading: v.heading,
+          flash: v.flash,
+          halo: inside ? WEATHER_META[inside.kind].color : null,
+        };
+      }),
+    [peers, weatherCells],
+  );
+
   const speedLabel = useMemo(
     () => (speedMps === null ? '--' : `${Math.round(speedMps * 3.6)} km/h`),
     [speedMps],
@@ -409,9 +477,18 @@ export default function App() {
           routeOverlay={demo ? DEMO_ROUTE : null}
           // Celle meteo simulate: esistono solo in demo.
           areaOverlays={demo ? weatherOverlays : null}
+          // Veicoli ROAD SENSE simulati: esistono solo in demo.
+          peerVehicles={demo ? peerVehicles : null}
           onMapMovedByUser={() => setFollow(false)}
         />
-        <AlertBanner alert={alert} onDismiss={() => setAlert(null)} />
+        <AlertBanner
+          alert={alert}
+          demo={demo}
+          onDismiss={() => {
+            roadAlertRef.current = null;
+            setAlert(null);
+          }}
+        />
         {/* Un solo banner alla volta: l'avviso stradale ha la precedenza,
             perche' riguarda cio' che c'e' gia' sull'asfalto. */}
         {alert === null && (
@@ -423,8 +500,18 @@ export default function App() {
             }}
           />
         )}
-        {demo && weatherCells.length > 0 && (
-          <div className="sim-badge">ROAD WEATHER · SIMULAZIONE</div>
+        {demo && (running || weatherCells.length > 0) && (
+          <div className="demo-legend">
+            {/* La riga dei veicoli compare solo quando i veicoli ci sono
+                davvero: una legenda che spiega cose non visibili confonde. */}
+            {running && (
+              <div className="row">
+                <span className="k me" /> TU
+                <span className="k peer" /> VEICOLO ROAD SENSE · SIMULATO
+              </div>
+            )}
+            {weatherCells.length > 0 && <div className="row sim">ROAD WEATHER · SIMULAZIONE</div>}
+          </div>
         )}
         {toast && <div className="toast">{toast}</div>}
       </div>

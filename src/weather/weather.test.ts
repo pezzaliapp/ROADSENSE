@@ -59,8 +59,11 @@ describe('il meteo esiste solo in DEMO MODE', () => {
   });
 
   it('l\'etichetta di simulazione compare solo in demo', () => {
-    expect(app).toMatch(/demo && weatherCells\.length > 0/);
-    expect(app).toMatch(/ROAD WEATHER · SIMULAZIONE/);
+    // La legenda - etichetta meteo inclusa - sta dentro un blocco `demo &&`.
+    expect(app).toMatch(/\{demo &&[\s\S]{0,120}demo-legend/);
+    expect(app).toMatch(
+      /weatherCells\.length > 0 && <div className="row sim">ROAD WEATHER · SIMULAZIONE<\/div>/,
+    );
   });
 
   it('nessun modulo meteo e\' importato dagli engine reali', () => {
@@ -301,15 +304,24 @@ describe('avvisi meteo', () => {
 
   it('a parita\' di conferma vince la piu\' vicina', () => {
     const engine = new WeatherAlertEngine();
-    const hail = cells.find((c) => c.kind === 'hail')!;
-    const downburst = cells.find((c) => c.kind === 'downburst')!;
     const driver = driverAt(0);
-    const nearest =
-      distanceToCellM(hail, driver) < distanceToCellM(downburst, driver) ? hail : downburst;
-    // Nessuna delle due e' confermata dalla strada.
-    expect(correlatedReporters(hail, clusters)).toBe(0);
-    expect(correlatedReporters(downburst, clusters)).toBe(0);
-    expect(engine.evaluate([hail, downburst], driver, clusters, 1000)?.cell.id).toBe(nearest.id);
+    const base = cells.find((c) => c.kind === 'hail')!;
+    // Due celle costruite apposta, entrambe davanti e nessuna confermata
+    // dalla strada: l'unico criterio rimasto e' la distanza.
+    const near = { ...base, id: 'vicina', radiusM: 600 };
+    const far = { ...base, id: 'lontana', radiusM: 200 };
+    expect(distanceToCellM(near, driver)).toBeLessThan(distanceToCellM(far, driver));
+    expect(engine.evaluate([far, near], driver, clusters, 1000)?.cell.id).toBe('vicina');
+  });
+
+  it('una cella con announce false non genera mai un avviso', () => {
+    const engine = new WeatherAlertEngine();
+    const downburst = cells.find((c) => c.kind === 'downburst')!;
+    // E' visibile sulla mappa...
+    expect(downburst.announce).toBe(false);
+    // ...ma anche standoci praticamente dentro non produce alcun banner.
+    const here = { lat: downburst.lat, lon: downburst.lon, heading: 0, speedMps: 10 };
+    expect(engine.evaluate([downburst], here, clusters, 1000)).toBeNull();
   });
 
   it('alla partenza della demo l\'avviso correlato e\' a distanza utile', () => {
