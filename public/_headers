@@ -1,0 +1,22 @@
+# ROAD SENSE - header di sicurezza per Cloudflare Pages.
+# Questo file viene letto automaticamente da Pages; in locale non ha effetto
+# (per lo sviluppo vale il meta CSP presente in index.html).
+
+/*
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://*.tile.openstreetmap.org; worker-src 'self'; manifest-src 'self'; upgrade-insecure-requests
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Cross-Origin-Opener-Policy: same-origin
+  Permissions-Policy: geolocation=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), camera=(), microphone=(), payment=(), usb=(), interest-cohort=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+# Gli asset hanno nomi con hash: possono essere cacheati a lungo.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Service worker e manifest devono poter cambiare subito.
+/sw.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache

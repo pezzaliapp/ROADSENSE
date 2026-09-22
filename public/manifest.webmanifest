@@ -1,0 +1,20 @@
+{
+  "name": "ROAD SENSE",
+  "short_name": "ROAD SENSE",
+  "description": "Lo smartphone come sensore stradale: rilevamento anomalie, segnalazioni anonime, alert sui pericoli davanti al veicolo.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0e11",
+  "theme_color": "#0b0e11",
+  "lang": "it",
+  "dir": "ltr",
+  "categories": ["navigation", "travel", "utilities"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
