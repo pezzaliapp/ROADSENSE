@@ -1,0 +1,34 @@
+# ROAD SENSE - configurazione del Worker.
+#
+# NON DEPLOYATO nella v0.1.0. Questo file e' pronto ma richiede due passaggi
+# manuali da autorizzare esplicitamente (vedi README, sezione Deployment):
+#   1. wrangler d1 create roadsense
+#   2. incollare qui il database_id restituito
+#
+# `database_id` NON e' un segreto (non da' accesso da solo), ma il valore reale
+# va inserito solo al momento del deploy.
+
+name = "roadsense-api"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+# Nessun binding a pagamento. Nessun Durable Object. Nessuna coda.
+# Solo D1, disponibile nel piano gratuito.
+[[d1_databases]]
+binding = "DB"
+database_name = "roadsense"
+database_id = "DA_COMPILARE_DOPO_wrangler_d1_create"
+
+[vars]
+# Origine autorizzata per le chiamate cross-origin.
+# Se il Worker viene servito sullo stesso dominio del frontend (consigliato,
+# tramite una route /api/*), questa variabile non serve.
+ALLOWED_ORIGIN = ""
+
+# I segreti NON vanno qui. RATE_SALT si imposta con:
+#   wrangler secret put RATE_SALT
+# In sviluppo locale si usa il file .dev.vars (gia' in .gitignore).
+
+# Limiti di sicurezza: nessun superamento automatico del piano gratuito.
+[observability]
+enabled = true
