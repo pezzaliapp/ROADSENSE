@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"
+    />
+    <title>ROAD SENSE</title>
+    <meta
+      name="description"
+      content="ROAD SENSE - lo smartphone come sensore stradale. Rilevamento anomalie, segnalazioni anonime, alert sui pericoli davanti al veicolo."
+    />
+
+    <!-- Content Security Policy.
+         In produzione vale la versione inviata da public/_headers (header HTTP,
+         piu' robusta). Questo meta protegge anche l'anteprima locale.
+         'unsafe-inline' su style-src e' richiesto da Leaflet, che posiziona i
+         tile tramite attributi style inline. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://*.tile.openstreetmap.org; worker-src 'self'; manifest-src 'self'"
+    />
+    <meta name="referrer" content="no-referrer" />
+
+    <meta name="theme-color" content="#0b0e11" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ROAD SENSE" />
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      ROAD SENSE richiede JavaScript attivo.
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
