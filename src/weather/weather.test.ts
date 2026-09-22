@@ -9,21 +9,18 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
+import { angleDeltaDeg, bearingDeg, destinationPoint, distanceM } from '../core/geo';
+import { installMemoryStorage } from '../core/testUtils';
+import { distanceFromRoute, positionAtDistance, ROUTE_LENGTH_M } from '../demo/route';
+import { DemoWeatherProvider } from './DemoWeatherProvider';
+import { NowcastWeatherProvider } from './NowcastWeatherProvider';
+import { approachBand, correlatedReporters, steadyEta, WeatherAlertEngine } from './weatherAlerts';
+import { formatEta, formatRoadDistance } from '../ui/weatherMeta';
+import { cellCentreAt, forecastIntersection, type RouteAhead } from './intersection';
 import { WEATHER } from '../config/config';
 import { buildClusters } from '../core/ConfidenceEngine';
 import { buildDemoEvents } from '../core/demoSeed';
-import { angleDeltaDeg, bearingDeg, destinationPoint, distanceM } from '../core/geo';
-import { installMemoryStorage } from '../core/testUtils';
-import { positionAtDistance, distanceFromRoute, ROUTE_LENGTH_M } from '../demo/route';
-import { DemoWeatherProvider } from './DemoWeatherProvider';
-import { NowcastWeatherProvider } from './NowcastWeatherProvider';
-import {
-  correlatedReporters,
-  distanceToCellM,
-  isCellRelevant,
-  WeatherAlertEngine,
-  weatherLookaheadM,
-} from './weatherAlerts';
+import { routeAheadFrom } from '../demo/routeAhead';
 
 installMemoryStorage();
 
@@ -126,11 +123,24 @@ describe('DemoWeatherProvider', () => {
     expect(a[0]).toEqual(b[0]);
   });
 
-  it('ogni area interseca realmente il percorso demo', () => {
+  it('ogni area incrocera\' davvero il percorso mentre il veicolo avanza', () => {
+    // Non si chiede che la cella tocchi la strada ADESSO: con il modello
+    // predittivo una cella puo' trovarsi lateralmente lontana e arrivare
+    // sulla carreggiata proprio quando ci arriva il veicolo. Quello che deve
+    // valere e' che l'incontro sia previsto.
+    const p = positionAtDistance(0);
+    const driver = { lat: p.lat, lon: p.lon, heading: p.heading, speedMps: 10 };
+    const { route } = routeAheadFrom(p, 0);
     for (const c of cells) {
-      // Il centro e' spostato a lato, ma il cerchio deve coprire la strada.
-      expect(distanceFromRoute(c)).toBeLessThan(c.radiusM);
+      const f = forecastIntersection(c, driver, route);
+      expect(f.roadDistanceM).not.toBeNull();
+      expect(f.etaSec).toBeGreaterThan(0);
     }
+  });
+
+  it('nessuna area e\' assurdamente lontana dal percorso', () => {
+    // Deve restare uno scenario urbano credibile, non una cella all'orizzonte.
+    for (const c of cells) expect(distanceFromRoute(c)).toBeLessThan(c.radiusM + 800);
   });
 
   it('le aree si muovono verso il percorso, non lontano da esso', () => {
@@ -177,168 +187,188 @@ describe('NowcastWeatherProvider e\' soltanto uno stub', () => {
   });
 });
 
-describe('avvisi meteo', () => {
+describe('avvisi meteo sullo scenario demo', () => {
   const clusters = buildClusters(buildDemoEvents());
 
-  /** Conducente posto sul percorso a una certa distanza dall'inizio. */
-  function driverAt(distance: number) {
+  /** Conducente sul tracciato demo a una certa distanza dall'inizio. */
+  function driverAt(distance: number, speedMps = 10) {
     const p = positionAtDistance(distance);
-    return { lat: p.lat, lon: p.lon, heading: p.heading, speedMps: 10 };
+    return { lat: p.lat, lon: p.lon, heading: p.heading, speedMps };
   }
 
-  it('la distanza di preavviso scala con la velocita\', entro i limiti', () => {
-    expect(weatherLookaheadM(0)).toBe(WEATHER.minLookaheadM);
-    expect(weatherLookaheadM(100)).toBe(WEATHER.maxLookaheadM);
-    expect(weatherLookaheadM(10)).toBeCloseTo(10 * WEATHER.lookaheadSec, 5);
-  });
+  const routeAt = (distance: number) => routeAheadFrom(positionAtDistance(distance), distance).route;
 
-  it('la distanza e\' misurata dal bordo dell\'area, non dal centro', () => {
-    const cell = cells[0]!;
-    expect(distanceToCellM(cell, { lat: cell.lat, lon: cell.lon })).toBe(0);
-  });
-
-  it('avvisa quando il veicolo si avvicina, non prima e non dopo', () => {
+  it('alla partenza prevede l\'incontro con distanza stradale e tempo', () => {
     const engine = new WeatherAlertEngine();
-    const rain = cells.find((c) => c.kind === 'heavyRain')!;
-    const rainAt = distanceAlong(rain);
-
-    // Troppo lontano per un preavviso.
-    // Nota: il percorso e' un anello di poco meno di 6 km e si ripiega su se'
-    // stesso, quindi arretrare lungo il tracciato NON allontana in linea
-    // d'aria. Il punto lontano va quindi costruito esplicitamente, con la
-    // direzione puntata verso la cella: cosi' l'unica cosa che puo' escluderla
-    // e' la distanza, che e' proprio cio' che si vuole verificare.
-    const away = destinationPoint({ lat: rain.lat, lon: rain.lon }, 270, 6000);
-    const farBehind = {
-      lat: away.lat,
-      lon: away.lon,
-      heading: bearingDeg(away, { lat: rain.lat, lon: rain.lon }),
-      speedMps: 10,
-    };
-    expect(distanceToCellM(rain, farBehind)).toBeGreaterThan(weatherLookaheadM(10));
-    expect(isCellRelevant(rain, farBehind)).toBeNull();
-
-    // In avvicinamento: rilevante.
-    const approaching = driverAt(rainAt - 800);
-    expect(isCellRelevant(rain, approaching)).not.toBeNull();
-
-    // Superata: l'area e' alle spalle.
-    const past = driverAt(rainAt + rain.radiusM + 900);
-    expect(isCellRelevant(rain, past)).toBeNull();
-    expect(engine.evaluate([rain], past, clusters, 1000)).toBeNull();
-  });
-
-  it('non avvisa senza direzione di marcia, se non si e\' gia\' dentro', () => {
-    const rain = cells.find((c) => c.kind === 'heavyRain')!;
-    const p = positionAtDistance(distanceAlong(rain) - 800);
-    expect(
-      isCellRelevant(rain, { lat: p.lat, lon: p.lon, heading: null, speedMps: 10 }),
-    ).toBeNull();
-  });
-
-  it('mostra una sola area alla volta: la piu\' vicina', () => {
-    const engine = new WeatherAlertEngine();
-    const rain = cells.find((c) => c.kind === 'heavyRain')!;
-    const driver = driverAt(distanceAlong(rain) - 700);
-    const alert = engine.evaluate(cells, driver, clusters, 1000);
+    const alert = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000);
     expect(alert).not.toBeNull();
-    expect(alert?.cell.id).toBe(rain.id);
+    expect(alert!.forecast.inside).toBe(false);
+    expect(alert!.forecast.roadDistanceM).toBeGreaterThan(300);
+    expect(alert!.forecast.etaSec).toBeGreaterThan(30);
+    // Distanza e tempo sono coerenti fra loro.
+    expect(alert!.forecast.etaSec).toBeCloseTo(alert!.forecast.roadDistanceM! / 10, 2);
   });
 
-  it('non ripete lo stesso avviso entro il periodo di attesa', () => {
+  it('la distanza e il tempo DIMINUISCONO avvicinandosi', () => {
+    const engine = new WeatherAlertEngine();
+    const alert = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000)!;
+    const cella = alert.cell;
+
+    let precedente = Number.POSITIVE_INFINITY;
+    let misure = 0;
+    for (let d = 0; d < 900; d += 150) {
+      const f = forecastIntersection(cella, driverAt(d), routeAt(d));
+      if (f.inside || f.roadDistanceM === null) break;
+      expect(f.roadDistanceM).toBeLessThan(precedente);
+      precedente = f.roadDistanceM;
+      misure++;
+    }
+    expect(misure).toBeGreaterThan(3);
+  });
+
+  it('la previsione si avvera: simulando il tempo, il veicolo entra davvero', () => {
+    // Questo e' il test che conta: si fa scorrere il tempo muovendo SIA il
+    // veicolo lungo la strada SIA la cella secondo la sua deriva, e si
+    // verifica che l'incontro avvenga, e avvenga quando era stato previsto.
+    const rain = cells.find((c) => c.kind === 'heavyRain')!;
+    const speed = 10;
+    const previsione = forecastIntersection(rain, driverAt(0, speed), routeAt(0));
+    expect(previsione.inside).toBe(false);
+    expect(previsione.etaSec).toBeGreaterThan(0);
+
+    let entrataSec: number | null = null;
+    for (let t = 0; t <= previsione.etaSec! * 1.5; t += 1) {
+      const veicolo = positionAtDistance(speed * t);
+      if (distanceM(veicolo, cellCentreAt(rain, t)) <= rain.radiusM) {
+        entrataSec = t;
+        break;
+      }
+    }
+
+    expect(entrataSec).not.toBeNull();
+    // L'istante reale coincide con quello previsto a meno di pochi secondi.
+    expect(Math.abs(entrataSec! - previsione.etaSec!)).toBeLessThan(5);
+  });
+
+  it('D) l\'avviso DECADE se l\'incontro non e\' piu\' previsto', () => {
+    const engine = new WeatherAlertEngine();
+    const alert = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000)!;
+    expect(alert).not.toBeNull();
+
+    // Il veicolo imbocca un'altra strada: un percorso che si allontana e non
+    // incrocera' mai la cella.
+    const altrove: RouteAhead = {
+      pointAt: (aheadM) =>
+        aheadM > 6000 ? null : destinationPoint({ lat: 45.9, lon: 9.9 }, 0, aheadM),
+    };
+    const dopo = engine.refresh(
+      alert,
+      { lat: 45.9, lon: 9.9, heading: 0, speedMps: 10 },
+      altrove,
+      clusters,
+    );
+    expect(dopo).toBeNull();
+  });
+
+  it('l\'avviso aggiornato conserva la cella e aggiorna i numeri', () => {
+    const engine = new WeatherAlertEngine();
+    const alert = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000)!;
+    const dopo = engine.refresh(alert, driverAt(300), routeAt(300), clusters)!;
+    expect(dopo).not.toBeNull();
+    expect(dopo.cell.id).toBe(alert.cell.id);
+    expect(dopo.forecast.roadDistanceM!).toBeLessThan(alert.forecast.roadDistanceM!);
+  });
+
+  it('non ripete la stessa cella nella stessa fascia di avvicinamento', () => {
+    const engine = new WeatherAlertEngine();
+    const primo = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000);
+    expect(primo).not.toBeNull();
+    // Stesso punto, molto piu' tardi: la situazione non e' cambiata.
+    const secondo = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000 + 600_000);
+    expect(secondo?.cell.id).not.toBe(primo!.cell.id);
+  });
+
+  it('ri-annuncia quando si supera una soglia di avvicinamento', () => {
+    const engine = new WeatherAlertEngine();
+    const primo = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000)!;
+    const cella = primo.cell;
+
+    // Si avanza finche' la fascia cambia, e si verifica che la cella torni.
+    let riannunciata = false;
+    for (let d = 100; d < 1500; d += 100) {
+      const t = 1000 + d * 100 + 600_000;
+      const a = engine.evaluate([cella], driverAt(d), routeAt(d), clusters, t);
+      if (a?.cell.id === cella.id) {
+        expect(approachBand(a.forecast)).toBeGreaterThan(approachBand(primo.forecast));
+        riannunciata = true;
+        break;
+      }
+    }
+    expect(riannunciata).toBe(true);
+  });
+
+  it('un avviso confermato dalla strada ha la precedenza', () => {
     const engine = new WeatherAlertEngine();
     const rain = cells.find((c) => c.kind === 'heavyRain')!;
-    const driver = driverAt(distanceAlong(rain) - 700);
-    expect(engine.evaluate([rain], driver, clusters, 1000)).not.toBeNull();
-    expect(engine.evaluate([rain], driver, clusters, 1000 + WEATHER.cooldownMs / 2)).toBeNull();
-    expect(engine.evaluate([rain], driver, clusters, 1000 + WEATHER.cooldownMs + 1)).not.toBeNull();
-  });
-
-  it('CORRELA la previsione con le segnalazioni ROAD SENSE nella stessa area', () => {
-    const rain = cells.find((c) => c.kind === 'heavyRain')!;
-    const reporters = correlatedReporters(rain, clusters);
-    // Nell'area della pioggia ROAD SENSE ha gia' segnalazioni di acqua.
-    expect(reporters).toBeGreaterThan(0);
-
-    const engine = new WeatherAlertEngine();
-    const alert = engine.evaluate([rain], driverAt(distanceAlong(rain) - 700), clusters, 1000);
-    expect(alert?.correlated).toBe(true);
-    expect(alert?.correlatedReporters).toBe(reporters);
-  });
-
-  it('senza segnalazioni stradali l\'avviso resta una semplice previsione', () => {
-    const hail = cells.find((c) => c.kind === 'hail')!;
-    expect(correlatedReporters(hail, clusters)).toBe(0);
-    const engine = new WeatherAlertEngine();
-    const alert = engine.evaluate([hail], driverAt(distanceAlong(hail) - 700), clusters, 1000);
-    expect(alert?.correlated).toBe(false);
-  });
-
-  it('una cella senza correlazione dichiarata non correla mai', () => {
-    const downburst = cells.find((c) => c.kind === 'downburst')!;
-    expect(downburst.correlatesWith).toBeUndefined();
-    expect(correlatedReporters(downburst, clusters)).toBe(0);
-  });
-
-  it('un avviso confermato dalla strada ha la precedenza su uno piu\' vicino ma non confermato', () => {
-    const engine = new WeatherAlertEngine();
-    const rain = cells.find((c) => c.kind === 'heavyRain')!;
-    const hail = cells.find((c) => c.kind === 'hail')!;
-    const driver = driverAt(0);
-
-    // Alla partenza entrambe le celle sono rilevanti.
-    expect(isCellRelevant(rain, driver)).not.toBeNull();
-    expect(isCellRelevant(hail, driver)).not.toBeNull();
-    // La grandine e' piu' vicina...
-    expect(distanceToCellM(hail, driver)).toBeLessThan(distanceToCellM(rain, driver));
-    // ...ma solo la pioggia e' confermata da segnalazioni sulla strada.
-    expect(correlatedReporters(hail, clusters)).toBe(0);
     expect(correlatedReporters(rain, clusters)).toBeGreaterThan(0);
-
-    // Due sorgenti indipendenti che concordano valgono piu' di una previsione
-    // non confermata, anche se piu' vicina.
-    const alert = engine.evaluate(cells, driver, clusters, 1000);
+    const alert = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000);
     expect(alert?.cell.id).toBe(rain.id);
     expect(alert?.correlated).toBe(true);
   });
 
-  it('a parita\' di conferma vince la piu\' vicina', () => {
+  it('rispetta l\'intervallo minimo fra due avvisi meteo', () => {
     const engine = new WeatherAlertEngine();
-    const driver = driverAt(0);
-    const base = cells.find((c) => c.kind === 'hail')!;
-    // Due celle costruite apposta, entrambe davanti e nessuna confermata
-    // dalla strada: l'unico criterio rimasto e' la distanza.
-    const near = { ...base, id: 'vicina', radiusM: 600 };
-    const far = { ...base, id: 'lontana', radiusM: 200 };
-    expect(distanceToCellM(near, driver)).toBeLessThan(distanceToCellM(far, driver));
-    expect(engine.evaluate([far, near], driver, clusters, 1000)?.cell.id).toBe('vicina');
-  });
-
-  it('una cella con announce false non genera mai un avviso', () => {
-    const engine = new WeatherAlertEngine();
-    const downburst = cells.find((c) => c.kind === 'downburst')!;
-    // E' visibile sulla mappa...
-    expect(downburst.announce).toBe(false);
-    // ...ma anche standoci praticamente dentro non produce alcun banner.
-    const here = { lat: downburst.lat, lon: downburst.lon, heading: 0, speedMps: 10 };
-    expect(engine.evaluate([downburst], here, clusters, 1000)).toBeNull();
-  });
-
-  it('alla partenza della demo l\'avviso correlato e\' a distanza utile', () => {
-    // La narrazione della demo si regge su questo: il primo avviso deve
-    // arrivare PRIMA di essere dentro al fenomeno.
-    const rain = cells.find((c) => c.kind === 'heavyRain')!;
-    const distance = distanceToCellM(rain, driverAt(0));
-    expect(distance).toBeGreaterThan(400);
-    expect(distance).toBeLessThan(weatherLookaheadM(10));
+    expect(engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000)).not.toBeNull();
+    expect(
+      engine.evaluate(cells, driverAt(50), routeAt(50), clusters, 1000 + WEATHER.minGapMs / 2),
+    ).toBeNull();
   });
 
   it('reset azzera lo storico degli avvisi', () => {
     const engine = new WeatherAlertEngine();
-    const rain = cells.find((c) => c.kind === 'heavyRain')!;
-    const driver = driverAt(distanceAlong(rain) - 700);
-    engine.evaluate([rain], driver, clusters, 1000);
+    const primo = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000);
     engine.reset();
-    expect(engine.evaluate([rain], driver, clusters, 1001)).not.toBeNull();
+    const secondo = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 2000);
+    expect(secondo?.cell.id).toBe(primo?.cell.id);
+  });
+});
+
+describe('stabilita\' del testo mostrato', () => {
+  it('il tempo mostrato non insegue ogni minima variazione', () => {
+    // Variazione piccola: resta quello di prima, cosi' il testo non balla.
+    expect(steadyEta(200, 205)).toBe(200);
+    expect(steadyEta(200, 190)).toBe(200);
+    // Variazione apprezzabile: si aggiorna.
+    expect(steadyEta(200, 160)).toBe(160);
+    expect(steadyEta(200, 250)).toBe(250);
+  });
+
+  it('parte dal primo valore disponibile e si azzera senza previsione', () => {
+    expect(steadyEta(null, 180)).toBe(180);
+    expect(steadyEta(200, null)).toBeNull();
+  });
+
+  it('la distanza mostrata e\' arrotondata a passi stabili', () => {
+    expect(formatRoadDistance(812)).toBe(formatRoadDistance(824));
+    expect(formatRoadDistance(1249)).toBe('1,2 km');
+    expect(formatRoadDistance(20)).toBe('50 m');
+  });
+
+  it('il tempo mostrato e\' arrotondato al minuto', () => {
+    expect(formatEta(30)).toBe('meno di 1 min');
+    expect(formatEta(185)).toBe('circa 3 min');
+    expect(formatEta(200)).toBe('circa 3 min');
+  });
+
+  it('avvicinandosi il tempo mostrato scende in modo monotono', () => {
+    let mostrato: number | null = null;
+    const letti: number[] = [];
+    // Stima che scende con un po' di rumore, come nella realta'.
+    for (let vero = 300; vero > 20; vero -= 4) {
+      const rumore = (vero % 3) - 1;
+      mostrato = steadyEta(mostrato, vero + rumore * 6);
+      letti.push(mostrato!);
+    }
+    for (let i = 1; i < letti.length; i++) expect(letti[i]!).toBeLessThanOrEqual(letti[i - 1]!);
   });
 });

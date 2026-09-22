@@ -338,30 +338,51 @@ export const DEMO = {
  * annuncia a 200 m, una cella temporalesca ha senso annunciarla a chilometri.
  */
 export const WEATHER = {
-  /** Secondi di anticipo desiderati: la distanza scala con la velocita'. */
-  lookaheadSec: 240,
-  minLookaheadM: 1200,
-  maxLookaheadM: 3000,
   /**
-   * Cono frontale piu' largo di quello stradale: una cella e' un'area estesa,
-   * non un punto, quindi la direzione esatta conta meno.
+   * Quanto lontano si cerca l'incontro lungo la strada, in metri.
+   * Su un anello urbano una cella "vicina" in linea d'aria puo' trovarsi a
+   * chilometri di percorso: e' la distanza stradale che conta.
    */
-  maxBearingDeltaDeg: 50,
+  maxSearchM: 6000,
+  /** Passo di campionamento della ricerca, m. Poi si raffina per bisezione. */
+  searchStepM: 25,
+  /** Oltre questo tempo previsto l'incontro e' troppo lontano per interessare, s. */
+  maxEtaSec: 600,
+  /** Sotto questa velocita' non si prevede nulla: da fermi non si arriva. */
+  minSpeedMps: 2,
+  /**
+   * Costante di tempo con cui si livella la velocita' usata per il tempo
+   * previsto, in secondi. Il tempo di arrivo risponde al ritmo di marcia, non
+   * all'accelerata del momento: dividendo per la velocita' istantanea il
+   * testo saltava fra "circa 3 min" e "circa 5 min" a ogni secondo.
+   */
+  speedSmoothingSec: 30,
+  /**
+   * Il tempo mostrato cambia solo se la stima si sposta di almeno questo
+   * valore, in secondi. Evita che l'arrotondamento al minuto oscilli attorno
+   * a una soglia.
+   */
+  etaDeadbandSec: 20,
+  /**
+   * Soglie di distanza stradale che fanno ri-annunciare la stessa cella.
+   * L'avviso torna quando la situazione cambia davvero, invece di restare
+   * fisso sullo schermo o di ripetersi a caso.
+   */
+  bandsM: [3000, 1500, 700] as readonly number[],
   /** Durata di visualizzazione dell'avviso, ms. */
-  displayMs: 10_000,
-  /** Non ripetere lo stesso avviso prima di questo intervallo, ms. */
-  cooldownMs: 180_000,
+  displayMs: 14_000,
+  /** Non ripetere la stessa cella nella stessa fascia prima di questo tempo, ms. */
+  cooldownMs: 30_000,
   /**
    * Intervallo minimo fra due avvisi meteo QUALSIASI.
    * Senza questo, appena scade un avviso ne parte subito un altro e la mappa
-   * diventa un bollettino: il meteo deve restare un contorno, non il
-   * contenuto principale.
+   * diventa un bollettino: il meteo deve restare un contorno.
    */
-  minGapMs: 25_000,
+  minGapMs: 20_000,
   /**
    * Raggio entro cui un evento stradale viene considerato correlato alla
-   * cella meteo. E' il cuore dell'idea: due sorgenti indipendenti che
-   * indicano lo stesso pericolo nello stesso punto.
+   * cella. E' il cuore dell'idea: due sorgenti indipendenti che indicano lo
+   * stesso pericolo nello stesso punto.
    */
   correlationRadiusM: 700,
 } as const;

@@ -15,6 +15,7 @@
  * Attivo esclusivamente in DEMO MODE.
  */
 
+import { DEMO } from '../config/config';
 import { positionAtDistance, ROUTE_LENGTH_M } from '../demo/route';
 import { destinationPoint, normalizeDeg } from '../core/geo';
 import type { WeatherCell, WeatherProvider } from './WeatherProvider';
@@ -37,7 +38,6 @@ interface CellSpec {
    * perpendicolare, che sarebbe innaturale.
    */
   driftSkewDeg: number;
-  driftSpeedMps: number;
   etaMin: number;
   severity: 1 | 2 | 3;
   correlatesWith?: 'water' | 'slippery';
@@ -53,9 +53,8 @@ interface CellSpec {
  *     gia' segnalazioni di acqua: e' l'esempio della CORRELAZIONE fra due
  *     sorgenti indipendenti, ed e' il primo avviso che compare;
  *  2. la GRANDINE e' l'esempio del preavviso puro, senza conferme dalla strada;
- *  3. il DOWNBURST resta visibile sulla mappa ma NON genera alcun banner
- *     (`announce: false`): mostra che il fenomeno c'e' senza allungare la
- *     narrazione.
+ *  3. il DOWNBURST e' il piu' lontano lungo il percorso: mostra il preavviso
+ *     a chilometri di distanza, che e' il caso d'uso vero.
  *
  * NOTA sulla geometria: l'anello di Milano e' compatto (poco piu' di un
  * chilometro di diametro) e si ripiega su se' stesso, quindi la distanza in
@@ -73,7 +72,6 @@ const SPECS: CellSpec[] = [
     offsetM: 260,
     offsetBearingOffsetDeg: 80,
     driftSkewDeg: 22,
-    driftSpeedMps: 8,
     etaMin: 4,
     severity: 3,
     correlatesWith: 'water',
@@ -84,10 +82,9 @@ const SPECS: CellSpec[] = [
     kind: 'hail',
     at: 0.22,
     radiusM: 430,
-    offsetM: 300,
+    offsetM: 500,
     offsetBearingOffsetDeg: -75,
     driftSkewDeg: -18,
-    driftSpeedMps: 11,
     etaMin: 8,
     severity: 3,
     announce: true,
@@ -95,19 +92,30 @@ const SPECS: CellSpec[] = [
   {
     id: 'demo-downburst',
     kind: 'downburst',
-    at: 0.75,
+    at: 0.62,
     radiusM: 360,
-    offsetM: 240,
+    offsetM: 700,
     offsetBearingOffsetDeg: 85,
     driftSkewDeg: 26,
-    driftSpeedMps: 9,
     etaMin: 14,
     severity: 2,
-    // Visibile sulla mappa, ma senza banner: la narrazione resta a tre tempi
-    // (pioggia correlata, evento stradale, grandine).
-    announce: false,
+    // Ora avvisa, ma solo se la previsione dice che il percorso incrocera'
+    // davvero la cella: e' il filtro a tenere corta la narrazione, non un
+    // interruttore.
+    announce: true,
   },
 ];
+
+/**
+ * Velocita' media del veicolo simulato, usata per dimensionare la deriva
+ * delle celle. Non e' la velocita' istantanea, che varia: e' il valore su cui
+ * si costruisce lo scenario.
+ */
+const NOMINAL_VEHICLE_SPEED_MPS = (DEMO.minSpeedMps + DEMO.maxSpeedMps) / 2;
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
+}
 
 export class DemoWeatherProvider implements WeatherProvider {
   readonly id = 'demo-weather';
@@ -120,12 +128,21 @@ export class DemoWeatherProvider implements WeatherProvider {
       const onRoute = positionAtDistance(spec.at * ROUTE_LENGTH_M);
       // Il centro e' spostato a lato: la cella attraversa il percorso invece
       // di esservi appoggiata sopra, come accade a un fenomeno reale.
+      const routeDistanceM = spec.at * ROUTE_LENGTH_M;
       const offsetBearing = normalizeDeg(onRoute.heading + spec.offsetBearingOffsetDeg);
       const center = destinationPoint(onRoute, offsetBearing, spec.offsetM);
       // La deriva e' l'opposto dello scostamento, con una leggera
       // inclinazione: per costruzione la cella si sta muovendo VERSO la
       // strada, che e' l'unica ragione per cui vale la pena avvisare.
       const driftHeading = normalizeDeg(offsetBearing + 180 + spec.driftSkewDeg);
+
+      // La VELOCITA' della cella non e' scelta a caso: e' ricavata dalla
+      // geometria in modo che la cella raggiunga la strada all'incirca quando
+      // ci arriva il veicolo. E' una scelta di scenario, dichiarata: la demo
+      // deve mostrare un incontro che avviene davvero, e con velocita' prese
+      // a caso la cella spazzava la strada e se ne andava prima dell'arrivo.
+      const vehicleEtaSec = Math.max(30, routeDistanceM / NOMINAL_VEHICLE_SPEED_MPS);
+      const driftSpeedMps = clamp(spec.offsetM / vehicleEtaSec, 1, 12);
       return {
         id: spec.id,
         kind: spec.kind,
@@ -133,7 +150,7 @@ export class DemoWeatherProvider implements WeatherProvider {
         lon: center.lon,
         radiusM: spec.radiusM,
         driftHeading,
-        driftSpeedMps: spec.driftSpeedMps,
+        driftSpeedMps,
         etaMin: spec.etaMin,
         severity: spec.severity,
         announce: spec.announce,

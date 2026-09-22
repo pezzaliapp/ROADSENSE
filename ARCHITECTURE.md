@@ -430,8 +430,22 @@ Il disegno resta separato dalla semantica: `MapView` conosce solo `AreaOverlay`
 («un cerchio con un'etichetta e una direzione di spostamento») e non sa cosa
 sia il meteo; la traduzione avviene in `ui/weatherOverlay.ts`. Gli avvisi meteo
 hanno un motore proprio (`weather/weatherAlerts.ts`) e non toccano
-`AlertEngine`: un evento stradale è un punto da annunciare a qualche centinaio
-di metri, una cella meteo è un'area in movimento da annunciare a chilometri.
+`AlertEngine`: un evento stradale è un **punto fermo** da annunciare a qualche
+centinaio di metri, una cella meteo è un'**area in movimento**.
+
+`weather/intersection.ts` contiene la differenza sostanziale: invece di
+misurare quanto dista la cella, prevede **se e quando il percorso la
+incrocerà**. Avanza lungo la strada a passi regolari e, per ogni punto,
+confronta il momento in cui ci arriverà il veicolo (`t = s / v`) con la
+posizione che la cella avrà in quell'istante, spostata secondo la sua deriva.
+Il primo punto in cui il veicolo si trova dentro l'area è l'incontro; il
+risultato viene raffinato per bisezione, altrimenti la distanza mostrata
+salterebbe a scatti del passo di campionamento.
+
+Il percorso davanti al veicolo entra da un'interfaccia (`RouteAhead`) e non da
+una dipendenza: **nella guida reale ROAD SENSE non sa dove stai andando**, e
+infatti non ha sorgenti meteo. Quella conoscenza esiste solo nella demo, dove
+il tracciato è noto.
 
 **Rete simulata.** `DemoVehicle` e `DemoTrafficProvider` in `src/demo/` fanno
 avanzare due veicoli fittizi sullo stesso tracciato. Gli eventi che producono

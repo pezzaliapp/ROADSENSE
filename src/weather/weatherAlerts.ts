@@ -5,51 +5,68 @@
  * cuore di ROAD SENSE e non vanno toccati per aggiungere una simulazione.
  * Le regole sono anche diverse, e la differenza e' concettuale:
  *
- *   un evento stradale e' un PUNTO, si annuncia a qualche centinaio di metri;
- *   una cella meteo e' un'AREA IN MOVIMENTO, si annuncia a chilometri.
+ *   un evento stradale e' un PUNTO FERMO: si annuncia a qualche centinaio di
+ *   metri, e basta sapere se e' davanti;
+ *
+ *   una cella meteo e' un'AREA IN MOVIMENTO: quello che conta e' se il mio
+ *   percorso la incrocera', dove e fra quanto. La previsione vera e' in
+ *   `intersection.ts`.
+ *
+ * QUANDO SI RI-ANNUNCIA
+ * Un avviso che resta fisso sullo schermo copre la mappa; uno che scade e non
+ * torna piu' fa perdere il senso dell'avvicinamento. La cella viene quindi
+ * ri-annunciata quando attraversa una soglia di distanza (WEATHER.bandsM) e
+ * quando si entra davvero nell'area: cioe' quando la situazione cambia.
  *
  * LA CORRELAZIONE
  * Se dentro l'area esistono gia' segnalazioni ROAD SENSE del tipo che quel
  * fenomeno produce (pioggia intensa -> acqua sulla carreggiata), l'avviso non
- * e' piu' una previsione: e' una previsione CONFERMATA DA CIO' CHE ACCADE SULLA
- * STRADA. E' il punto dell'intera idea, e qui e' un semplice conteggio.
+ * e' piu' una previsione: e' una previsione CONFERMATA DA CIO' CHE ACCADE
+ * SULLA STRADA. E' il punto dell'intera idea, e qui e' un semplice conteggio.
  */
 
 import { WEATHER } from '../config/config';
-import { angleDeltaDeg, bearingDeg, distanceM } from '../core/geo';
+import { distanceM } from '../core/geo';
 import type { EventCluster } from '../core/types';
+import {
+  forecastIntersection,
+  type CellForecast,
+  type RouteAhead,
+  type WeatherDriverState,
+} from './intersection';
 import type { WeatherCell } from './WeatherProvider';
 
-export interface WeatherDriverState {
-  lat: number;
-  lon: number;
-  heading: number | null;
-  speedMps: number | null;
-}
+export type { WeatherDriverState, RouteAhead } from './intersection';
 
 export interface WeatherAlert {
   cell: WeatherCell;
-  /** Distanza dal bordo dell'area, in metri (mai negativa). */
-  distanceM: number;
+  /** Previsione dell'incontro: dentro adesso, oppure distanza e tempo. */
+  forecast: CellForecast;
   /** Quante segnalazioni stradali indipendenti confermano il fenomeno. */
   correlatedReporters: number;
   /** true quando due sorgenti indipendenti indicano lo stesso pericolo. */
   correlated: boolean;
+  /**
+   * Tempo effettivamente MOSTRATO, s. Segue la previsione ma con una banda
+   * morta, perche' il testo non oscilli attorno all'arrotondamento al minuto.
+   */
+  displayEtaSec: number | null;
   issuedAt: number;
 }
 
-/** Distanza di preavviso, proporzionale alla velocita'. */
-export function weatherLookaheadM(speedMps: number | null): number {
-  const v = speedMps ?? 0;
-  return Math.min(WEATHER.maxLookaheadM, Math.max(WEATHER.minLookaheadM, v * WEATHER.lookaheadSec));
-}
-
 /**
- * Distanza dal BORDO dell'area, non dal centro: e' il momento in cui si entra
- * nel fenomeno che conta. Zero se si e' gia' dentro.
+ * Fascia di avvicinamento. Cresce man mano che ci si avvicina; l'avviso torna
+ * quando la fascia cambia.
+ * 0 = lontano, ultima = gia' dentro l'area.
  */
-export function distanceToCellM(cell: WeatherCell, from: { lat: number; lon: number }): number {
-  return Math.max(0, distanceM(from, { lat: cell.lat, lon: cell.lon }) - cell.radiusM);
+export function approachBand(forecast: CellForecast): number {
+  if (forecast.inside) return WEATHER.bandsM.length + 1;
+  if (forecast.roadDistanceM === null) return -1;
+  let band = 0;
+  for (const threshold of WEATHER.bandsM) {
+    if (forecast.roadDistanceM <= threshold) band++;
+  }
+  return band;
 }
 
 /** Conta i segnalatori stradali indipendenti coerenti con la cella. */
@@ -67,75 +84,82 @@ export function correlatedReporters(
   return total;
 }
 
-/** Una cella e' rilevante se e' davanti, abbastanza vicina e non alle spalle. */
-export function isCellRelevant(
-  cell: WeatherCell,
-  driver: WeatherDriverState,
-): { distanceM: number } | null {
-  const dist = distanceToCellM(cell, driver);
-  if (dist > weatherLookaheadM(driver.speedMps)) return null;
-
-  // Gia' dentro l'area: l'avviso e' sempre pertinente.
-  if (dist === 0) return { distanceM: 0 };
-
-  // Senza direzione di marcia non si sa cosa sia "davanti": non si allerta,
-  // per non trasformare la mappa in un bollettino.
-  if (driver.heading === null) return null;
-
-  const toCentre = bearingDeg(driver, { lat: cell.lat, lon: cell.lon });
-  const centreDist = distanceM(driver, { lat: cell.lat, lon: cell.lon });
-
-  // Una cella e' un'AREA, non un punto: sottende un angolo. Misurare il cono
-  // sul solo centro escluderebbe aree grandi e vicine che stanno comunque
-  // attraversando la strada davanti al veicolo. Si sottrae quindi la
-  // semiampiezza angolare dell'area.
-  const halfWidthDeg =
-    centreDist > 0
-      ? (Math.asin(Math.min(1, cell.radiusM / centreDist)) * 180) / Math.PI
-      : 90;
-  const offAxis = Math.max(0, angleDeltaDeg(driver.heading, toCentre) - halfWidthDeg);
-  if (offAxis > WEATHER.maxBearingDeltaDeg) return null;
-
-  return { distanceM: dist };
-}
-
-/**
- * Sceglie l'avviso meteo da mostrare.
- *
- * Mostra UNA cella alla volta, la piu' vicina: la demo deve restare leggibile,
- * non diventare un bollettino.
- */
 export class WeatherAlertEngine {
-  private lastAlertAt = new Map<string, number>();
-  /** Istante dell'ultimo avviso meteo, di qualunque cella. */
+  /** Ultima fascia annunciata per ogni cella, e quando. */
+  private announced = new Map<string, { band: number; at: number }>();
   private lastAnyAlertAt = Number.NEGATIVE_INFINITY;
 
   reset(): void {
-    this.lastAlertAt.clear();
+    this.announced.clear();
     this.lastAnyAlertAt = Number.NEGATIVE_INFINITY;
   }
 
+  /**
+   * Ricalcola la previsione di una cella gia' annunciata.
+   *
+   * Serve a due cose: far scendere distanza e tempo mentre ci si avvicina, e
+   * far DECADERE l'avviso se l'incontro non e' piu' previsto - per esempio
+   * perche' il veicolo ha cambiato strada o la cella si e' allontanata.
+   * Restituisce `null` quando l'avviso non ha piu' ragione di esistere.
+   */
+  refresh(
+    alert: WeatherAlert,
+    driver: WeatherDriverState,
+    route: RouteAhead | null,
+    clusters: readonly EventCluster[],
+  ): WeatherAlert | null {
+    const forecast = forecastIntersection(alert.cell, driver, route);
+    if (!forecast.inside && forecast.roadDistanceM === null) return null;
+    const reporters = correlatedReporters(alert.cell, clusters);
+    return {
+      ...alert,
+      forecast,
+      displayEtaSec: steadyEta(alert.displayEtaSec, forecast.etaSec),
+      correlatedReporters: reporters,
+      correlated: reporters > 0,
+    };
+  }
+
+  /**
+   * Sceglie l'avviso da mostrare, se ce n'e' uno.
+   * Mostra UNA cella alla volta: la demo deve restare leggibile, non
+   * diventare un bollettino.
+   */
   evaluate(
     cells: readonly WeatherCell[],
     driver: WeatherDriverState,
+    route: RouteAhead | null,
     roadClusters: readonly EventCluster[],
     now: number = Date.now(),
   ): WeatherAlert | null {
-    // Il meteo non deve incalzare: fra due avvisi passa un intervallo minimo.
     if (now - this.lastAnyAlertAt < WEATHER.minGapMs) return null;
 
-    let best: { cell: WeatherCell; distanceM: number; reporters: number } | null = null;
+    let best: {
+      cell: WeatherCell;
+      forecast: CellForecast;
+      band: number;
+      reporters: number;
+    } | null = null;
 
     for (const cell of cells) {
       // Le celle con `announce: false` si vedono sulla mappa ma non avvisano.
       if (!cell.announce) continue;
-      const relevant = isCellRelevant(cell, driver);
-      if (!relevant) continue;
-      const last = this.lastAlertAt.get(cell.id);
-      if (last !== undefined && now - last < WEATHER.cooldownMs) continue;
+
+      const forecast = forecastIntersection(cell, driver, route);
+      // Nessun incontro previsto: niente da dire. E' il caso della cella che
+      // si allontana, o che passa accanto al percorso senza incrociarlo.
+      if (!forecast.inside && forecast.roadDistanceM === null) continue;
+
+      const band = approachBand(forecast);
+      const last = this.announced.get(cell.id);
+      // Si annuncia solo se la situazione e' cambiata: prima volta, oppure
+      // una soglia di avvicinamento superata.
+      if (last && band <= last.band) continue;
+      if (last && now - last.at < WEATHER.cooldownMs) continue;
 
       const reporters = correlatedReporters(cell, roadClusters);
-      const candidate = { cell, distanceM: relevant.distanceM, reporters };
+      const candidate = { cell, forecast, band, reporters };
+
       if (!best) {
         best = candidate;
         continue;
@@ -144,26 +168,43 @@ export class WeatherAlertEngine {
       // Un fenomeno gia' CONFERMATO da segnalazioni sulla strada ha la
       // precedenza su una previsione non confermata, anche se piu' lontano:
       // due sorgenti indipendenti che concordano valgono piu' di una sola.
-      // A parita' di conferma vince il piu' vicino.
+      // A parita' di conferma vince l'incontro piu' imminente.
       const better =
         candidate.reporters > 0 && best.reporters === 0
           ? true
           : candidate.reporters === 0 && best.reporters > 0
             ? false
-            : candidate.distanceM < best.distanceM;
+            : eta(candidate.forecast) < eta(best.forecast);
       if (better) best = candidate;
     }
 
     if (!best) return null;
-    this.lastAlertAt.set(best.cell.id, now);
+
+    this.announced.set(best.cell.id, { band: best.band, at: now });
     this.lastAnyAlertAt = now;
 
     return {
       cell: best.cell,
-      distanceM: best.distanceM,
+      forecast: best.forecast,
+      displayEtaSec: best.forecast.etaSec,
       correlatedReporters: best.reporters,
       correlated: best.reporters > 0,
       issuedAt: now,
     };
   }
+}
+
+function eta(forecast: CellForecast): number {
+  return forecast.inside ? 0 : (forecast.etaSec ?? Number.POSITIVE_INFINITY);
+}
+
+/**
+ * Tempo da mostrare: segue la nuova stima solo se si e' spostata in modo
+ * apprezzabile. Senza questa banda morta il valore arrotondato al minuto
+ * saltava avanti e indietro attorno alla soglia.
+ */
+export function steadyEta(shown: number | null, next: number | null): number | null {
+  if (next === null) return null;
+  if (shown === null) return next;
+  return Math.abs(next - shown) >= WEATHER.etaDeadbandSec ? next : shown;
 }

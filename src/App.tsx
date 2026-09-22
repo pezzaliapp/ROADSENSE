@@ -27,6 +27,7 @@ import { DemoSensorProvider } from './core/sensors/DemoSensorProvider';
 import { DEMO_ROUTE } from './demo/demoRoute';
 import { DEMO_ROUTE_CENTER } from './demo/demoRoute';
 import { DemoTrafficProvider } from './demo/DemoTrafficProvider';
+import { routeAheadFrom } from './demo/routeAhead';
 import type { DemoVehicleState } from './demo/DemoVehicle';
 import type { EventCluster, EventType, GeoSample, RoadEvent, SystemStatus } from './core/types';
 import { backendEnabled, fetchNearby, postEvents } from './net/api';
@@ -83,6 +84,16 @@ export default function App() {
   const weatherAlertRef = useRef<WeatherAlert | null>(null);
   /** Le celle in un ref: cosi' `handleGeo` resta stabile fra i render. */
   const weatherCellsRef = useRef<readonly WeatherCell[]>([]);
+  /** Ultima distanza nota lungo il tracciato demo: restringe la ricerca. */
+  const routeHintRef = useRef<number | undefined>(undefined);
+  /** true solo in DEMO MODE: fuori non esiste alcun percorso noto. */
+  const demoRef = useRef(false);
+  /**
+   * Velocita' livellata, usata SOLO per il tempo previsto degli avvisi meteo.
+   * Gli avvisi stradali continuano a usare la velocita' istantanea: la' serve
+   * la distanza di frenata di adesso, non il ritmo medio.
+   */
+  const weatherSpeedRef = useRef<number | null>(null);
   const weatherTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSyncRef = useRef<{ at: number; lat: number; lon: number } | null>(null);
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -153,6 +164,7 @@ export default function App() {
   // Fuori dalla demo non viene nemmeno costruita: nella v0.1.0 ROAD SENSE non
   // ha alcuna sorgente meteo reale, e NOWCAST non e' collegato.
   useEffect(() => {
+    demoRef.current = demo;
     if (!demo) {
       weatherCellsRef.current = [];
       setWeatherCells([]);
@@ -162,6 +174,7 @@ export default function App() {
     }
     const provider = new DemoWeatherProvider();
     const cells = provider.isAvailable() ? provider.cells() : [];
+    routeHintRef.current = undefined;
     weatherCellsRef.current = cells;
     setWeatherCells(cells);
     weatherEngineRef.current.reset();
@@ -272,26 +285,70 @@ export default function App() {
 
       // Avvisi meteo: solo in demo, e solo se non ne e' gia' visibile uno.
       // Mostrarne piu' di uno alla volta renderebbe la demo un bollettino.
+      const cells = weatherCellsRef.current;
+      if (cells.length === 0) return;
+
+      // Il percorso davanti al veicolo esiste SOLO in demo: e' la conoscenza
+      // che rende possibile prevedere l'incontro invece di aspettarlo.
+      const ahead = demoRef.current
+        ? routeAheadFrom({ lat: geo.lat, lon: geo.lon }, routeHintRef.current)
+        : null;
+      if (ahead) routeHintRef.current = ahead.atM;
+
+      // Livellamento esponenziale della velocita': il tempo previsto deve
+      // seguire il ritmo di marcia, non l'accelerata del momento.
+      if (geo.speedMps !== null) {
+        const alpha = 1 - Math.exp(-1 / WEATHER.speedSmoothingSec);
+        weatherSpeedRef.current =
+          weatherSpeedRef.current === null
+            ? geo.speedMps
+            : weatherSpeedRef.current + (geo.speedMps - weatherSpeedRef.current) * alpha;
+      }
+
+      const driverState = {
+        lat: geo.lat,
+        lon: geo.lon,
+        heading: geo.heading,
+        speedMps: weatherSpeedRef.current,
+      };
+
+      const shownWeather = weatherAlertRef.current;
+      if (shownWeather) {
+        // Avviso gia' sullo schermo: si ricalcola, cosi' distanza e tempo
+        // scendono mentre ci si avvicina. Se l'incontro non e' piu' previsto
+        // - altra strada, cella che si allontana - l'avviso decade subito.
+        const updated = weatherEngineRef.current.refresh(
+          shownWeather,
+          driverState,
+          ahead?.route ?? null,
+          current,
+        );
+        weatherAlertRef.current = updated;
+        setWeatherAlert(updated);
+        if (!updated && weatherTimerRef.current) clearTimeout(weatherTimerRef.current);
+        return;
+      }
+
       // Un solo banner alla volta: non si emette un avviso meteo finche' ne
       // e' visibile un altro, meteo o stradale. Altrimenti resterebbe coperto
       // e la demo perderebbe un passaggio della narrazione.
-      const cells = weatherCellsRef.current;
-      if (cells.length > 0 && weatherAlertRef.current === null && roadAlertRef.current === null) {
-        const weather = weatherEngineRef.current.evaluate(
-          cells,
-          { lat: geo.lat, lon: geo.lon, heading: geo.heading, speedMps: geo.speedMps },
-          current,
-          geo.ts,
-        );
-        if (weather) {
-          weatherAlertRef.current = weather;
-          setWeatherAlert(weather);
-          if (weatherTimerRef.current) clearTimeout(weatherTimerRef.current);
-          weatherTimerRef.current = setTimeout(() => {
-            weatherAlertRef.current = null;
-            setWeatherAlert(null);
-          }, WEATHER.displayMs);
-        }
+      if (roadAlertRef.current !== null) return;
+
+      const weather = weatherEngineRef.current.evaluate(
+        cells,
+        driverState,
+        ahead?.route ?? null,
+        current,
+        geo.ts,
+      );
+      if (weather) {
+        weatherAlertRef.current = weather;
+        setWeatherAlert(weather);
+        if (weatherTimerRef.current) clearTimeout(weatherTimerRef.current);
+        weatherTimerRef.current = setTimeout(() => {
+          weatherAlertRef.current = null;
+          setWeatherAlert(null);
+        }, WEATHER.displayMs);
       }
     },
     [maybeSync],
@@ -359,6 +416,7 @@ export default function App() {
     setRunning(false);
     setStatus((s) => ({ ...s, gps: 'off', sensors: 'off' }));
     setSpeedMps(null);
+    weatherSpeedRef.current = null;
     setAlert(null);
     roadAlertRef.current = null;
     setWeatherAlert(null);

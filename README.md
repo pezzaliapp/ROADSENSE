@@ -134,6 +134,30 @@ NOWCAST      direbbe cosa sta arrivando SOPRA la strada
 insieme      avvisano prima di arrivarci
 ```
 
+**Non si aspetta di entrare nella cella.** Se l'auto è già dentro, il
+preavviso è arrivato tardi. ROAD SENSE calcola invece *se e quando* il
+percorso incrocerà il fenomeno, e lo dice con distanza **stradale** e tempo:
+
+```
+🌩 GRANDINE SUL PERCORSO
+750 m · circa 1 min
+```
+
+Due approcci più semplici non bastano, ed è utile dire perché:
+
+- la **distanza in linea d'aria** dal centro della cella è sbagliata: la strada
+  non è diritta, e una cella a 800 m in linea d'aria può trovarsi a 3 km di
+  percorso, o non essere mai raggiunta;
+- anche **distanza ÷ velocità** è sbagliata se la cella si muove: il punto
+  dell'incontro non è dove la cella si trova adesso.
+
+Il calcolo avanza lungo il percorso a passi regolari e, per ogni punto,
+confronta *quando ci arriverà il veicolo* con *dove sarà la cella in quel
+momento*. Quando si entra davvero nell'area il messaggio cambia stato —
+`GRANDINE NELL'AREA ATTUALE` — perché una distanza lì non avrebbe senso. Se
+l'incontro non è più previsto (altra strada, cella che si allontana) l'avviso
+**decade**.
+
 L'esempio più importante è la **correlazione**: dove una cella di pioggia
 intensa coincide con segnalazioni ROAD SENSE di acqua sulla carreggiata,
 l'avviso non è più una previsione ma una previsione **confermata da ciò che
@@ -438,7 +462,8 @@ Coprono la logica critica e i percorsi degradati:
 - `mapProviders.test.ts` — attribuzione obbligatoria, HTTPS, coerenza con la CSP, service worker che non memorizza cartografia
 - `degradation.test.ts` — sensori mancanti, compensazione orientamento, backend assente, stub
 - `demoRoute.test.ts` — validità del tracciato, moto lungo le strade, velocità e direzione, eventi sulla carreggiata, riavvio del giro, GPS reale non toccato
-- `weather.test.ts` — meteo assente fuori dalla demo, nessuna richiesta di rete, stub NOWCAST inerte, aree che intersecano il percorso, distanze di preavviso, correlazione fra sorgenti
+- `weather.test.ts` — meteo assente fuori dalla demo, nessuna richiesta di rete, stub NOWCAST inerte, avvisi sullo scenario demo, decadimento, stabilità del testo
+- `intersection.test.ts` — distanza lungo il percorso, tempo in funzione della velocità, cella che si avvicina, che si allontana, che non intersecherà mai, ingresso nell'area
 - `demoTraffic.test.ts` — veicoli simulati assenti fuori dalla demo, nessuna richiesta di rete, percorsi stradali, rilevamento nel punto e nel momento giusti, conferma che alza davvero la confidenza
 - `demoPipeline.test.ts` — catena completa in DEMO MODE a tempo simulato
 
