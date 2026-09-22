@@ -1,0 +1,34 @@
+# dipendenze
+node_modules/
+
+# build
+dist/
+dist-ssr/
+*.local
+
+# log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# ambiente / segreti  (NON committare mai)
+.env
+.env.*
+!.env.example
+.dev.vars
+.wrangler/
+wrangler.toml.local
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# test / cache
+coverage/
+.vite/
