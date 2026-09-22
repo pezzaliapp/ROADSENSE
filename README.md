@@ -153,7 +153,13 @@ Due approcci più semplici non bastano, ed è utile dire perché:
 
 Il calcolo avanza lungo il percorso a passi regolari e, per ogni punto,
 confronta *quando ci arriverà il veicolo* con *dove sarà la cella in quel
-momento*. Quando si entra davvero nell'area il messaggio cambia stato —
+momento*.
+
+Le celle **si muovono davvero sulla mappa**, e questo è il punto: la posizione
+disegnata e quella usata dal modello sono **lo stesso valore**, non due valori
+che si somigliano. Un solo orologio (`DemoWeatherProvider.cells(now)`) alimenta
+entrambi. La geometria è in coordinate geografiche e vive nel canvas, quindi
+resta ancorata al punto giusto a qualunque zoom. Quando si entra davvero nell'area il messaggio cambia stato —
 `GRANDINE NELL'AREA ATTUALE` — perché una distanza lì non avrebbe senso. Se
 l'incontro non è più previsto (altra strada, cella che si allontana) l'avviso
 **decade**.

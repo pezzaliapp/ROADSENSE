@@ -385,6 +385,15 @@ export const WEATHER = {
    * stesso pericolo nello stesso punto.
    */
   correlationRadiusM: 700,
+  /**
+   * Cadenza con cui la demo avanza l'orologio delle celle, ms.
+   * E' l'UNICO orologio: alimenta sia il disegno sulla mappa sia la
+   * previsione dell'incontro. Cinque aggiornamenti al secondo bastano per una
+   * deriva di pochi metri al secondo e restano leggeri su uno smartphone.
+   */
+  demoTickMs: 200,
+  /** Durata di un ciclo di pulsazione del bordo e di raffica, ms. */
+  animationCycleMs: 3500,
 } as const;
 
 // ---------------------------------------------------------------------------

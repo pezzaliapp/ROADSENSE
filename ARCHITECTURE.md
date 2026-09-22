@@ -447,6 +447,24 @@ una dipendenza: **nella guida reale ROAD SENSE non sa dove stai andando**, e
 infatti non ha sorgenti meteo. Quella conoscenza esiste solo nella demo, dove
 il tracciato è noto.
 
+### Un solo orologio
+
+`DemoWeatherProvider.cells(now)` restituisce le celle **già portate
+all'istante richiesto**. Lo stesso array alimenta il disegno sulla mappa e la
+previsione dell'incontro: non esiste una "posizione grafica" separata da
+quella del modello. Se un giorno divergessero sarebbe perché qualcuno ha
+smesso di usare quella funzione, non perché due calcoli si sono disallineati —
+e tre test lo impediscono.
+
+Il disegno è tutto **geografico** (sorgenti GeoJSON aggiornate con `setData`),
+mai trasformazioni CSS in pixel: così le animazioni restano centrate sul punto
+giusto a ogni zoom. I livelli vengono creati una volta sola e a ogni tick si
+caricano soltanto pochi vertici; `MapView` non possiede alcun timer — riceve
+posizione e fase dall'esterno.
+
+La preferenza **`prefers-reduced-motion`** distingue il dato dalla decorazione:
+la deriva resta (è il modello), pulsazione, granuli e raffiche si fermano.
+
 **Rete simulata.** `DemoVehicle` e `DemoTrafficProvider` in `src/demo/` fanno
 avanzare due veicoli fittizi sullo stesso tracciato. Gli eventi che producono
 sono normali `RoadEvent` con un proprio identificatore anonimo, calcolati con

@@ -18,6 +18,7 @@
 import { DEMO } from '../config/config';
 import { positionAtDistance, ROUTE_LENGTH_M } from '../demo/route';
 import { destinationPoint, normalizeDeg } from '../core/geo';
+import { cellCentreAt } from './intersection';
 import type { WeatherCell, WeatherProvider } from './WeatherProvider';
 
 interface CellSpec {
@@ -121,10 +122,17 @@ export class DemoWeatherProvider implements WeatherProvider {
   readonly id = 'demo-weather';
   readonly label = 'Road Weather (simulazione)';
 
-  private readonly built: WeatherCell[];
+  /** Celle come si trovano all'istante zero dello scenario. */
+  private readonly base: WeatherCell[];
+  /**
+   * Istante in cui lo scenario e' partito. Finche' e' null le celle restano
+   * ferme al tempo zero: la deriva comincia con il monitoraggio, cosi' la
+   * demo e' deterministica e ripetibile.
+   */
+  private startedAt: number | null = null;
 
   constructor() {
-    this.built = SPECS.map((spec) => {
+    this.base = SPECS.map((spec) => {
       const onRoute = positionAtDistance(spec.at * ROUTE_LENGTH_M);
       // Il centro e' spostato a lato: la cella attraversa il percorso invece
       // di esservi appoggiata sopra, come accade a un fenomeno reale.
@@ -164,8 +172,34 @@ export class DemoWeatherProvider implements WeatherProvider {
     return true;
   }
 
-  cells(): WeatherCell[] {
-    // Copia difensiva: nessun consumatore deve poter alterare lo scenario.
-    return this.built.map((c) => ({ ...c }));
+  /** Avvia l'orologio dello scenario. */
+  start(nowMs: number): void {
+    this.startedAt = nowMs;
+  }
+
+  /** Ferma l'orologio e riporta le celle al tempo zero. */
+  stop(): void {
+    this.startedAt = null;
+  }
+
+  /** Secondi trascorsi dall'avvio dello scenario. */
+  elapsedSec(now: number = Date.now()): number {
+    return this.startedAt === null ? 0 : Math.max(0, (now - this.startedAt) / 1000);
+  }
+
+  /**
+   * Celle nell'istante richiesto, con la deriva gia' applicata.
+   *
+   * E' l'UNICA sorgente di posizione: lo stesso array alimenta il disegno
+   * sulla mappa e la previsione dell'incontro. Se un giorno queste due cose
+   * divergessero, sarebbe perche' qualcuno ha smesso di usare questa
+   * funzione, non perche' i due calcoli si sono disallineati.
+   */
+  cells(now: number = Date.now()): WeatherCell[] {
+    const elapsed = this.elapsedSec(now);
+    return this.base.map((c) => {
+      const p = cellCentreAt(c, elapsed);
+      return { ...c, lat: p.lat, lon: p.lon };
+    });
   }
 }

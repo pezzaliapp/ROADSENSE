@@ -104,15 +104,21 @@ export class WeatherAlertEngine {
    */
   refresh(
     alert: WeatherAlert,
+    cells: readonly WeatherCell[],
     driver: WeatherDriverState,
     route: RouteAhead | null,
     clusters: readonly EventCluster[],
   ): WeatherAlert | null {
-    const forecast = forecastIntersection(alert.cell, driver, route);
+    // Si riparte dalla cella AGGIORNATA, non dalla copia congelata
+    // nell'avviso: altrimenti la previsione userebbe una posizione vecchia
+    // mentre sulla mappa la cella si e' gia' spostata.
+    const cell = cells.find((c) => c.id === alert.cell.id) ?? alert.cell;
+    const forecast = forecastIntersection(cell, driver, route);
     if (!forecast.inside && forecast.roadDistanceM === null) return null;
-    const reporters = correlatedReporters(alert.cell, clusters);
+    const reporters = correlatedReporters(cell, clusters);
     return {
       ...alert,
+      cell,
       forecast,
       displayEtaSec: steadyEta(alert.displayEtaSec, forecast.etaSec),
       correlatedReporters: reporters,

@@ -44,6 +44,7 @@ import { MapView } from './ui/MapView';
 import { ReportSheet } from './ui/ReportSheet';
 import { StatusBar } from './ui/StatusBar';
 import { usePwaUpdate } from './ui/usePwaUpdate';
+import { useReducedMotion } from './ui/useReducedMotion';
 import { useWakeLock } from './ui/useWakeLock';
 
 function isDemoRequested(): boolean {
@@ -62,6 +63,8 @@ export default function App() {
   const [weatherAlert, setWeatherAlert] = useState<WeatherAlert | null>(null);
   const [weatherCells, setWeatherCells] = useState<readonly WeatherCell[]>([]);
   const [peers, setPeers] = useState<readonly DemoVehicleState[]>([]);
+  /** Avanzamento ciclico delle animazioni delle celle, 0..1. */
+  const [weatherPhase, setWeatherPhase] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
@@ -71,6 +74,7 @@ export default function App() {
     network: navigator.onLine ? (backendEnabled() ? 'online' : 'local') : 'offline',
   });
 
+  const reducedMotion = useReducedMotion();
   const { updateReady, applyUpdate } = usePwaUpdate();
   useWakeLock(running);
 
@@ -86,6 +90,8 @@ export default function App() {
   const weatherCellsRef = useRef<readonly WeatherCell[]>([]);
   /** Ultima distanza nota lungo il tracciato demo: restringe la ricerca. */
   const routeHintRef = useRef<number | undefined>(undefined);
+  /** Sorgente meteo della demo: possiede l'unico orologio dello scenario. */
+  const weatherProviderRef = useRef<DemoWeatherProvider | null>(null);
   /** true solo in DEMO MODE: fuori non esiste alcun percorso noto. */
   const demoRef = useRef(false);
   /**
@@ -173,16 +179,45 @@ export default function App() {
       return;
     }
     const provider = new DemoWeatherProvider();
+    weatherProviderRef.current = provider;
     const cells = provider.isAvailable() ? provider.cells() : [];
     routeHintRef.current = undefined;
     weatherCellsRef.current = cells;
     setWeatherCells(cells);
     weatherEngineRef.current.reset();
     return () => {
+      weatherProviderRef.current = null;
       weatherCellsRef.current = [];
       setWeatherCells([]);
     };
   }, [demo]);
+
+  // -- l'unico orologio della demo -----------------------------------------
+  // Avanza le celle e la fase delle animazioni. Lo stesso array di celle
+  // alimenta il disegno sulla mappa E la previsione dell'incontro: non
+  // esistono due posizioni, una grafica e una del modello.
+  useEffect(() => {
+    const provider = weatherProviderRef.current;
+    if (!demo || !running || !provider) return;
+
+    provider.start(Date.now());
+    const id = setInterval(() => {
+      const now = Date.now();
+      const cells = provider.cells(now);
+      weatherCellsRef.current = cells;
+      setWeatherCells(cells);
+      setWeatherPhase(((provider.elapsedSec(now) * 1000) / WEATHER.animationCycleMs) % 1);
+    }, WEATHER.demoTickMs);
+
+    return () => {
+      clearInterval(id);
+      provider.stop();
+      const frozen = provider.cells();
+      weatherCellsRef.current = frozen;
+      setWeatherCells(frozen);
+      setWeatherPhase(0);
+    };
+  }, [demo, running]);
 
   // -- veicoli ROAD SENSE SIMULATI: esclusivamente in DEMO MODE ------------
   // Fuori dalla demo il provider non viene nemmeno costruito. Non esiste
@@ -319,6 +354,7 @@ export default function App() {
         // - altra strada, cella che si allontana - l'avviso decade subito.
         const updated = weatherEngineRef.current.refresh(
           shownWeather,
+          cells,
           driverState,
           ahead?.route ?? null,
           current,
@@ -479,7 +515,13 @@ export default function App() {
     setDemo((d) => !d);
   }, [stop]);
 
-  const weatherOverlays = useMemo(() => weatherCellsToOverlays(weatherCells), [weatherCells]);
+  const weatherOverlays = useMemo(
+    // La DERIVA resta anche con "meno movimento": e' il dato, non un effetto.
+    // Si ferma invece tutto cio' che e' decorativo - pulsazione, granuli,
+    // raffiche - bloccando la fase su un valore costante.
+    () => weatherCellsToOverlays(weatherCells, reducedMotion ? 0.5 : weatherPhase),
+    [weatherCells, weatherPhase, reducedMotion],
+  );
 
   /**
    * Veicoli simulati pronti per la mappa. Chi si trova dentro un'area meteo

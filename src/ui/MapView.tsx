@@ -444,8 +444,20 @@ export function MapView({
   }, []);
 
   // -- aree generiche (rimovibili: basta non passare `areaOverlays`) --------
-  const areaKey = useMemo(
-    () => (areaOverlays ?? []).map((a) => `${a.id}|${a.lat}|${a.lon}|${a.radiusM}`).join(','),
+  //
+  // Due effetti distinti, e la distinzione conta:
+  //   1. la CREAZIONE di sorgenti, livelli e badge avviene solo quando cambia
+  //      l'insieme delle aree;
+  //   2. l'AGGIORNAMENTO dei dati avviene a ogni variazione, con `setData`.
+  // Ricreare i livelli a ogni fotogramma costerebbe moltissimo; aggiornare
+  // solo i dati e' un caricamento di pochi vertici.
+  //
+  // Tutta la geometria e' in coordinate geografiche e vive nel canvas: le
+  // animazioni restano quindi ancorate al punto giusto a qualunque zoom, cosa
+  // che una trasformazione CSS in pixel non garantirebbe.
+
+  const areaIds = useMemo(
+    () => (areaOverlays ?? []).map((a) => a.id).join(','),
     [areaOverlays],
   );
 
@@ -454,65 +466,39 @@ export function MapView({
     const markers = areaMarkersRef.current;
     if (!map || !areaOverlays || areaOverlays.length === 0) return;
 
-    const AREA_SOURCE = 'rs-areas';
-    const DRIFT_SOURCE = 'rs-areas-drift';
-    const FILL = 'rs-areas-fill';
-    const OUTLINE = 'rs-areas-outline';
-    const DRIFT = 'rs-areas-drift-line';
-
     const add = () => {
       if (map.getSource(AREA_SOURCE)) return;
 
-      map.addSource(AREA_SOURCE, {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: areaOverlays.map((a) => ({
-            type: 'Feature' as const,
-            properties: { color: a.color },
-            geometry: { type: 'Polygon' as const, coordinates: [circle(a)] },
-          })),
-        },
-      });
-
-      map.addSource(DRIFT_SOURCE, {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: areaOverlays
-            .filter((a) => a.driftHeading !== null)
-            .map((a) => ({
-              type: 'Feature' as const,
-              properties: { color: a.color },
-              geometry: { type: 'LineString' as const, coordinates: driftLine(a) },
-            })),
-        },
-      });
+      for (const id of [AREA_SOURCE, DRIFT_SOURCE, SPECKLE_SOURCE, GUST_SOURCE]) {
+        map.addSource(id, { type: 'geojson', data: emptyCollection() });
+      }
 
       // Riempimento molto tenue: l'area deve leggersi come atmosfera, non
       // come un oggetto sulla carreggiata. La strada resta protagonista.
       map.addLayer({
-        id: FILL,
+        id: FILL_LAYER,
         type: 'fill',
         source: AREA_SOURCE,
-        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.13 },
+        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'fillOpacity'] },
       });
       // Contorno tratteggiato: un fronte meteo non ha un bordo netto.
+      // Larghezza e opacita' arrivano dai dati, cosi' la pulsazione si
+      // aggiorna con lo stesso `setData` di tutto il resto.
       map.addLayer({
-        id: OUTLINE,
+        id: OUTLINE_LAYER,
         type: 'line',
         source: AREA_SOURCE,
         paint: {
           'line-color': ['get', 'color'],
-          'line-width': 1.5,
-          'line-opacity': 0.55,
+          'line-width': ['get', 'outlineWidth'],
+          'line-opacity': ['get', 'outlineOpacity'],
           'line-dasharray': [3, 2],
         },
       });
       // Traiettoria prevista: comunica "quest'area si sta muovendo verso di te"
       // senza bisogno di alcuna animazione.
       map.addLayer({
-        id: DRIFT,
+        id: DRIFT_LAYER,
         type: 'line',
         source: DRIFT_SOURCE,
         layout: { 'line-cap': 'round' },
@@ -523,9 +509,31 @@ export function MapView({
           'line-dasharray': [1, 1.6],
         },
       });
+      // Vettori divergenti del downburst: pochi, sottili, che si allungano e
+      // svaniscono. Una visualizzazione tecnica, non un effetto.
+      map.addLayer({
+        id: GUST_LAYER,
+        type: 'line',
+        source: GUST_SOURCE,
+        layout: { 'line-cap': 'round' },
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': 1.6,
+          'line-opacity': ['get', 'opacity'],
+        },
+      });
+      // Granuli interni: suggeriscono la grandine con una manciata di punti.
+      map.addLayer({
+        id: SPECKLE_LAYER,
+        type: 'circle',
+        source: SPECKLE_SOURCE,
+        paint: {
+          'circle-radius': 1.6,
+          'circle-color': ['get', 'color'],
+          'circle-opacity': ['get', 'opacity'],
+        },
+      });
 
-      // I livelli delle aree vanno sotto agli eventi ROAD SENSE, che sono
-      // marker HTML e quindi gia' sopra al canvas: qui basta l'ordine interno.
       for (const a of areaOverlays) {
         const el = document.createElement('div');
         el.className = 'rs-area-badge';
@@ -565,14 +573,152 @@ export function MapView({
       for (const m of markers.values()) m.remove();
       markers.clear();
       if (!mapRef.current) return;
-      for (const id of [FILL, OUTLINE, DRIFT]) if (map.getLayer(id)) map.removeLayer(id);
-      for (const id of [AREA_SOURCE, DRIFT_SOURCE]) if (map.getSource(id)) map.removeSource(id);
+      for (const id of [FILL_LAYER, OUTLINE_LAYER, DRIFT_LAYER, GUST_LAYER, SPECKLE_LAYER]) {
+        if (map.getLayer(id)) map.removeLayer(id);
+      }
+      for (const id of [AREA_SOURCE, DRIFT_SOURCE, SPECKLE_SOURCE, GUST_SOURCE]) {
+        if (map.getSource(id)) map.removeSource(id);
+      }
     };
-    // areaKey riassume il contenuto delle aree.
+    // Solo l'INSIEME delle aree ricrea i livelli.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [areaKey]);
+  }, [areaIds]);
+
+  // Aggiornamento dei soli dati: posizione, pulsazione, granuli, raffiche.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !areaOverlays) return;
+    const areas = areaOverlays;
+
+    const apply = () => {
+      const src = (id: string) => map.getSource(id) as { setData?: (d: unknown) => void } | undefined;
+      src(AREA_SOURCE)?.setData?.(areaCollection(areas));
+      src(DRIFT_SOURCE)?.setData?.(driftCollection(areas));
+      src(SPECKLE_SOURCE)?.setData?.(speckleCollection(areas));
+      src(GUST_SOURCE)?.setData?.(gustCollection(areas));
+      // I badge sono marker: MapLibre li riproietta da solo a ogni zoom.
+      for (const a of areas) areaMarkersRef.current.get(a.id)?.setLngLat([a.lon, a.lat]);
+    };
+
+    if (map.getSource(AREA_SOURCE)) apply();
+    else map.once('idle', apply);
+  }, [areaOverlays]);
 
   return <div id="map" ref={containerRef} role="application" aria-label="Mappa ROAD SENSE" />;
+}
+
+const AREA_SOURCE = 'rs-areas';
+const DRIFT_SOURCE = 'rs-areas-drift';
+const SPECKLE_SOURCE = 'rs-areas-speckles';
+const GUST_SOURCE = 'rs-areas-gusts';
+const FILL_LAYER = 'rs-areas-fill';
+const OUTLINE_LAYER = 'rs-areas-outline';
+const DRIFT_LAYER = 'rs-areas-drift-line';
+const SPECKLE_LAYER = 'rs-areas-speckle';
+const GUST_LAYER = 'rs-areas-gust';
+
+type Feature = {
+  type: 'Feature';
+  properties: Record<string, unknown>;
+  geometry:
+    | { type: 'Polygon'; coordinates: [number, number][][] }
+    | { type: 'LineString'; coordinates: [number, number][] }
+    | { type: 'Point'; coordinates: [number, number] };
+};
+
+const emptyCollection = () => ({ type: 'FeatureCollection' as const, features: [] as Feature[] });
+
+const collection = (features: Feature[]) => ({ type: 'FeatureCollection' as const, features });
+
+/** Onda triangolare 0..1..0: una pulsazione senza scatti ai due estremi. */
+function pulseWave(phase: number): number {
+  const t = phase % 1;
+  return t < 0.5 ? t * 2 : 2 - t * 2;
+}
+
+/** Area con bordo pulsante. */
+function areaCollection(areas: readonly AreaOverlay[]): ReturnType<typeof collection> {
+  return collection(
+    areas.map((a) => {
+      const wave = pulseWave(a.phase);
+      return {
+        type: 'Feature',
+        properties: {
+          color: a.color,
+          fillOpacity: a.fillOpacity,
+          outlineWidth: 1.5 + a.pulse * wave * 1.6,
+          outlineOpacity: 0.45 + a.pulse * wave * 0.5,
+        },
+        geometry: { type: 'Polygon', coordinates: [circle(a)] },
+      };
+    }),
+  );
+}
+
+function driftCollection(areas: readonly AreaOverlay[]): ReturnType<typeof collection> {
+  return collection(
+    areas
+      .filter((a) => a.driftHeading !== null)
+      .map((a) => ({
+        type: 'Feature' as const,
+        properties: { color: a.color },
+        geometry: { type: 'LineString' as const, coordinates: driftLine(a) },
+      })),
+  );
+}
+
+/**
+ * Granuli interni, disposti in modo deterministico: le stesse posizioni a
+ * ogni fotogramma, cosi' non "sfarfallano" saltando da un punto all'altro.
+ * Cambia solo la loro opacita', sfalsata fra l'uno e l'altro.
+ */
+function speckleCollection(areas: readonly AreaOverlay[]): ReturnType<typeof collection> {
+  const features: Feature[] = [];
+  for (const a of areas) {
+    for (let i = 0; i < a.speckles; i++) {
+      const bearing = (i * 360) / a.speckles + 23;
+      const radius = a.radiusM * (0.25 + 0.6 * (((i * 7) % 5) / 5));
+      const p = destinationPoint(a, bearing, radius);
+      const twinkle = pulseWave(a.phase + i / a.speckles);
+      features.push({
+        type: 'Feature',
+        properties: { color: a.color, opacity: 0.25 + 0.45 * twinkle },
+        geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+      });
+    }
+  }
+  return collection(features);
+}
+
+/**
+ * Vettori divergenti: partono dal centro, si allungano e svaniscono, sfalsati
+ * fra loro. Sono pochi e sottili di proposito: devono dire "aria che diverge",
+ * non riempire lo schermo.
+ */
+function gustCollection(areas: readonly AreaOverlay[]): ReturnType<typeof collection> {
+  const features: Feature[] = [];
+  for (const a of areas) {
+    for (let i = 0; i < a.gusts; i++) {
+      const g = (a.phase + i / a.gusts) % 1;
+      const bearing = (i * 360) / a.gusts + 15;
+      const from = a.radiusM * (0.15 + 0.55 * g);
+      const to = from + a.radiusM * 0.22;
+      const start = destinationPoint(a, bearing, from);
+      const end = destinationPoint(a, bearing, Math.min(to, a.radiusM * 0.95));
+      features.push({
+        type: 'Feature',
+        properties: { color: a.color, opacity: 0.65 * (1 - g) },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [start.lon, start.lat],
+            [end.lon, end.lat],
+          ],
+        },
+      });
+    }
+  }
+  return collection(features);
 }
 
 /** Poligono che approssima il cerchio dell'area, in coordinate GeoJSON. */

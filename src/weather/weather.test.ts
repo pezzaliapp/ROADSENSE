@@ -263,6 +263,7 @@ describe('avvisi meteo sullo scenario demo', () => {
     };
     const dopo = engine.refresh(
       alert,
+      cells,
       { lat: 45.9, lon: 9.9, heading: 0, speedMps: 10 },
       altrove,
       clusters,
@@ -273,7 +274,7 @@ describe('avvisi meteo sullo scenario demo', () => {
   it('l\'avviso aggiornato conserva la cella e aggiorna i numeri', () => {
     const engine = new WeatherAlertEngine();
     const alert = engine.evaluate(cells, driverAt(0), routeAt(0), clusters, 1000)!;
-    const dopo = engine.refresh(alert, driverAt(300), routeAt(300), clusters)!;
+    const dopo = engine.refresh(alert, cells, driverAt(300), routeAt(300), clusters)!;
     expect(dopo).not.toBeNull();
     expect(dopo.cell.id).toBe(alert.cell.id);
     expect(dopo.forecast.roadDistanceM!).toBeLessThan(alert.forecast.roadDistanceM!);

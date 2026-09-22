@@ -67,8 +67,15 @@ export interface WeatherProvider {
    */
   isAvailable(): boolean;
   /**
-   * Celle attualmente rilevanti. Deve essere una funzione pura e SINCRONA:
-   * nessuna richiesta di rete, nessuna attesa, nessun effetto collaterale.
+   * Celle come si trovano NELL'ISTANTE `now`.
+   *
+   * La posizione restituita e' quella corrente, deriva gia' applicata: e' la
+   * stessa che viene disegnata sulla mappa e la stessa da cui il motore fa
+   * partire la previsione. Un'unica sorgente, cosi' non puo' esistere uno
+   * scarto fra cio' che si vede e cio' che il modello calcola.
+   *
+   * Deve essere pura e SINCRONA: nessuna richiesta di rete, nessuna attesa,
+   * nessun effetto collaterale.
    */
   cells(now?: number): WeatherCell[];
   /** Motivo per cui il provider non e' disponibile, mostrabile nella UI. */
