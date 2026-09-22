@@ -420,6 +420,19 @@ l'utente.
 
 L'architettura è già predisposta, ma **nulla di tutto questo è nella v0.1.0**.
 
+**Road Weather.** `WeatherProvider` in `src/weather/` fissa il contratto di una
+sorgente meteo. L'unica implementazione attiva è `DemoWeatherProvider`, che
+produce dati inventati in modo **sincrono** — sincrono di proposito: rende
+impossibile per costruzione una chiamata di rete. `NowcastWeatherProvider` è
+uno stub che non si connette a nulla.
+
+Il disegno resta separato dalla semantica: `MapView` conosce solo `AreaOverlay`
+(«un cerchio con un'etichetta e una direzione di spostamento») e non sa cosa
+sia il meteo; la traduzione avviene in `ui/weatherOverlay.ts`. Gli avvisi meteo
+hanno un motore proprio (`weather/weatherAlerts.ts`) e non toccano
+`AlertEngine`: un evento stradale è un punto da annunciare a qualche centinaio
+di metri, una cella meteo è un'area in movimento da annunciare a chilometri.
+
 **Smart tyre.** `VehicleSample` in `SensorProvider.ts` prevede pressione,
 temperatura, indice di aderenza e un riferimento **tecnico** del sensore (mai
 riferibile a una persona). Basta implementare un provider.

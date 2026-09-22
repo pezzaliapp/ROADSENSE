@@ -35,11 +35,15 @@ interface SeedSpec {
  * per non sovrapporre i due meccanismi.
  */
 const SPECS: SeedSpec[] = [
-  { at: 0.05, type: 'water', severity: 2, reporters: 3, source: 'manual', ageMin: 25 },
-  { at: 0.24, type: 'pothole', severity: 3, reporters: 5, source: 'auto', ageMin: 90 },
-  { at: 0.47, type: 'roadworks', severity: 1, reporters: 2, source: 'manual', ageMin: 300 },
+  // Subito dopo la partenza: e' il primo avviso che si incontra guidando, e
+  // mostra ROAD SENSE nel suo mestiere, senza meteo.
+  { at: 0.05, type: 'pothole', severity: 3, reporters: 5, source: 'auto', ageMin: 90 },
+  // Piu' avanti, sotto la cella di pioggia simulata: e' la coppia su cui si
+  // regge la dimostrazione della CORRELAZIONE fra le due sorgenti.
+  { at: 0.42, type: 'water', severity: 2, reporters: 3, source: 'manual', ageMin: 25 },
+  { at: 0.58, type: 'roadworks', severity: 1, reporters: 2, source: 'manual', ageMin: 300 },
   { at: 0.7, type: 'obstacle', severity: 2, reporters: 1, source: 'manual', ageMin: 12 },
-  { at: 0.92, type: 'slippery', severity: 2, reporters: 4, source: 'manual', ageMin: 45 },
+  { at: 0.88, type: 'slippery', severity: 2, reporters: 4, source: 'manual', ageMin: 45 },
 ];
 
 /** Scostamento laterale dalla mezzeria, in metri: sul bordo della carreggiata. */

@@ -189,6 +189,13 @@ export const MAP = {
   fallbackZoom: 5.5,
   followZoom: 16.5,
   /**
+   * Zoom di inseguimento in DEMO MODE: piu' arretrato di quello reale.
+   * Serve a far stare nello schermo anche le aree meteo simulate, che sono
+   * larghe centinaia di metri. Non tocca la guida reale, dove conta vedere
+   * bene la strada immediatamente davanti.
+   */
+  followZoomDemo: 15,
+  /**
    * Durata dello scorrimento con cui la mappa segue il veicolo, ms.
    * Coincide con l'intervallo tra due posizioni GPS: il movimento risulta
    * continuo invece che a scatti.
@@ -277,6 +284,41 @@ export const DEMO = {
     { at: 0.61, peak: 4.2, durationMs: 90 },
     { at: 0.84, peak: 7.8, durationMs: 140 },
   ],
+} as const;
+
+// ---------------------------------------------------------------------------
+// ROAD WEATHER (solo DEMO nella v0.1.0)
+// ---------------------------------------------------------------------------
+/**
+ * Parametri degli avvisi meteo simulati.
+ *
+ * ATTENZIONE: nella v0.1.0 il meteo esiste ESCLUSIVAMENTE in DEMO MODE ed e'
+ * una simulazione visiva di una possibile integrazione futura. NOWCAST non e'
+ * collegato a ROAD SENSE: non esistono API, connessioni o dipendenze.
+ *
+ * Le distanze sono molto maggiori di quelle degli eventi stradali: una buca si
+ * annuncia a 200 m, una cella temporalesca ha senso annunciarla a chilometri.
+ */
+export const WEATHER = {
+  /** Secondi di anticipo desiderati: la distanza scala con la velocita'. */
+  lookaheadSec: 240,
+  minLookaheadM: 1200,
+  maxLookaheadM: 3000,
+  /**
+   * Cono frontale piu' largo di quello stradale: una cella e' un'area estesa,
+   * non un punto, quindi la direzione esatta conta meno.
+   */
+  maxBearingDeltaDeg: 50,
+  /** Durata di visualizzazione dell'avviso, ms. */
+  displayMs: 10_000,
+  /** Non ripetere lo stesso avviso prima di questo intervallo, ms. */
+  cooldownMs: 180_000,
+  /**
+   * Raggio entro cui un evento stradale viene considerato correlato alla
+   * cella meteo. E' il cuore dell'idea: due sorgenti indipendenti che
+   * indicano lo stesso pericolo nello stesso punto.
+   */
+  correlationRadiusM: 700,
 } as const;
 
 // ---------------------------------------------------------------------------

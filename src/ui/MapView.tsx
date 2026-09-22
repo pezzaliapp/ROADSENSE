@@ -53,7 +53,9 @@ setWorkerUrl(maplibreWorkerUrl);
 
 import { ACTIVE_MAP_PROVIDER, MAP, type MapTileProvider } from '../config/config';
 import { confidenceLevel } from '../core/ConfidenceEngine';
+import { destinationPoint } from '../core/geo';
 import type { EventCluster } from '../core/types';
+import type { AreaOverlay } from './areaOverlay';
 import { EVENT_META } from './eventMeta';
 
 interface Props {
@@ -73,7 +75,17 @@ interface Props {
    * Per rimuovere la funzione basta smettere di passare questa prop: tutto il
    * codice che la riguarda e' raccolto in un unico effetto piu' sotto.
    */
+  /** Zoom usato quando la mappa aggancia la posizione. */
+  followZoom?: number;
   routeOverlay?: readonly (readonly [number, number])[] | null;
+  /**
+   * Aree da disegnare sotto agli eventi: cerchi semitrasparenti con
+   * un'etichetta e una direzione di spostamento.
+   *
+   * MapView non sa cosa rappresentino. Nella v0.1.0 le usa solo la DEMO MODE
+   * per le celle meteo simulate; per rimuoverle basta non passare la prop.
+   */
+  areaOverlays?: readonly AreaOverlay[] | null;
   onMapMovedByUser?: () => void;
 }
 
@@ -109,7 +121,9 @@ export function MapView({
   heading,
   follow,
   initialView,
+  followZoom: followZoomProp,
   routeOverlay,
+  areaOverlays,
   onMapMovedByUser,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -118,6 +132,7 @@ export function MapView({
   const markersRef = useRef<Map<string, Marker>>(new Map());
   const meRef = useRef<Marker | null>(null);
   const meElRef = useRef<HTMLDivElement | null>(null);
+  const areaMarkersRef = useRef<Map<string, Marker>>(new Map());
   const firstFixRef = useRef(false);
 
   // -- inizializzazione (una sola volta) -----------------------------------
@@ -269,7 +284,10 @@ export function MapView({
 
     if (follow) {
       if (!firstFixRef.current) {
-        map.jumpTo({ center: [position.lon, position.lat], zoom: MAP.followZoom });
+        map.jumpTo({
+          center: [position.lon, position.lat],
+          zoom: followZoomProp ?? MAP.followZoom,
+        });
         firstFixRef.current = true;
       } else {
         // Scorrimento continuo invece di uno scatto a ogni aggiornamento GPS.
@@ -285,7 +303,7 @@ export function MapView({
         });
       }
     }
-  }, [position, heading, follow]);
+  }, [position, heading, follow, followZoomProp]);
 
   // -- tracciato della demo (rimovibile: basta non passare `routeOverlay`) ---
   useEffect(() => {
@@ -330,7 +348,157 @@ export function MapView({
     };
   }, [routeOverlay]);
 
+  // -- aree generiche (rimovibili: basta non passare `areaOverlays`) --------
+  const areaKey = useMemo(
+    () => (areaOverlays ?? []).map((a) => `${a.id}|${a.lat}|${a.lon}|${a.radiusM}`).join(','),
+    [areaOverlays],
+  );
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const markers = areaMarkersRef.current;
+    if (!map || !areaOverlays || areaOverlays.length === 0) return;
+
+    const AREA_SOURCE = 'rs-areas';
+    const DRIFT_SOURCE = 'rs-areas-drift';
+    const FILL = 'rs-areas-fill';
+    const OUTLINE = 'rs-areas-outline';
+    const DRIFT = 'rs-areas-drift-line';
+
+    const add = () => {
+      if (map.getSource(AREA_SOURCE)) return;
+
+      map.addSource(AREA_SOURCE, {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: areaOverlays.map((a) => ({
+            type: 'Feature' as const,
+            properties: { color: a.color },
+            geometry: { type: 'Polygon' as const, coordinates: [circle(a)] },
+          })),
+        },
+      });
+
+      map.addSource(DRIFT_SOURCE, {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: areaOverlays
+            .filter((a) => a.driftHeading !== null)
+            .map((a) => ({
+              type: 'Feature' as const,
+              properties: { color: a.color },
+              geometry: { type: 'LineString' as const, coordinates: driftLine(a) },
+            })),
+        },
+      });
+
+      // Riempimento molto tenue: l'area deve leggersi come atmosfera, non
+      // come un oggetto sulla carreggiata. La strada resta protagonista.
+      map.addLayer({
+        id: FILL,
+        type: 'fill',
+        source: AREA_SOURCE,
+        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.13 },
+      });
+      // Contorno tratteggiato: un fronte meteo non ha un bordo netto.
+      map.addLayer({
+        id: OUTLINE,
+        type: 'line',
+        source: AREA_SOURCE,
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': 1.5,
+          'line-opacity': 0.55,
+          'line-dasharray': [3, 2],
+        },
+      });
+      // Traiettoria prevista: comunica "quest'area si sta muovendo verso di te"
+      // senza bisogno di alcuna animazione.
+      map.addLayer({
+        id: DRIFT,
+        type: 'line',
+        source: DRIFT_SOURCE,
+        layout: { 'line-cap': 'round' },
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': 2,
+          'line-opacity': 0.7,
+          'line-dasharray': [1, 1.6],
+        },
+      });
+
+      // I livelli delle aree vanno sotto agli eventi ROAD SENSE, che sono
+      // marker HTML e quindi gia' sopra al canvas: qui basta l'ordine interno.
+      for (const a of areaOverlays) {
+        const el = document.createElement('div');
+        el.className = 'rs-area-badge';
+        el.style.borderColor = a.color;
+
+        const glyph = document.createElement('span');
+        glyph.className = 'g';
+        glyph.textContent = a.glyph;
+
+        const text = document.createElement('span');
+        text.className = 't';
+        const caption = document.createElement('em');
+        caption.textContent = a.caption;
+        const label = document.createElement('strong');
+        label.textContent = a.label;
+        text.append(caption, label);
+
+        el.append(glyph, text);
+
+        if (a.driftHeading !== null) {
+          const arrow = document.createElement('span');
+          arrow.className = 'arrow';
+          arrow.textContent = '➤';
+          // L'emoji punta a destra: si ruota per indicare la deriva reale.
+          arrow.style.transform = `rotate(${a.driftHeading - 90}deg)`;
+          el.append(arrow);
+        }
+
+        markers.set(a.id, new Marker({ element: el }).setLngLat([a.lon, a.lat]).addTo(map));
+      }
+    };
+
+    if (map.isStyleLoaded()) add();
+    else map.once('load', add);
+
+    return () => {
+      for (const m of markers.values()) m.remove();
+      markers.clear();
+      if (!mapRef.current) return;
+      for (const id of [FILL, OUTLINE, DRIFT]) if (map.getLayer(id)) map.removeLayer(id);
+      for (const id of [AREA_SOURCE, DRIFT_SOURCE]) if (map.getSource(id)) map.removeSource(id);
+    };
+    // areaKey riassume il contenuto delle aree.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [areaKey]);
+
   return <div id="map" ref={containerRef} role="application" aria-label="Mappa ROAD SENSE" />;
+}
+
+/** Poligono che approssima il cerchio dell'area, in coordinate GeoJSON. */
+function circle(area: AreaOverlay): [number, number][] {
+  const steps = 48;
+  const out: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const p = destinationPoint(area, (i * 360) / steps, area.radiusM);
+    out.push([p.lon, p.lat]);
+  }
+  return out;
+}
+
+/** Segmento che parte dal centro e indica dove si sta spostando l'area. */
+function driftLine(area: AreaOverlay): [number, number][] {
+  const heading = area.driftHeading ?? 0;
+  const tip = destinationPoint(area, heading, area.radiusM * 1.9);
+  return [
+    [area.lon, area.lat],
+    [tip.lon, tip.lat],
+  ];
 }
 
 function tooltip(c: EventCluster): string {

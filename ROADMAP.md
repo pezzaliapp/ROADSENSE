@@ -106,6 +106,11 @@ Solo se e quando esisteranno API ufficiali e autorizzate.
 
 **Non prima che ROAD SENSE sia stabile e provato su strada.**
 
+Nella v0.1.0 esiste una **simulazione puramente visiva** dentro la DEMO MODE
+(`src/weather/`), per mostrare il concetto senza implementarlo: aree meteo
+inventate sul percorso demo e un esempio di correlazione fra previsione e
+segnalazioni stradali. `NowcastWeatherProvider` è uno stub inerte.
+
 L'idea: arricchire gli alert con condizioni meteo pericolose — precipitazioni
 intense, grandine, temporali.
 

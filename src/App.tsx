@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ALERT, API, APP, PRIVACY, SENSORS } from './config/config';
+import { ALERT, API, APP, MAP, PRIVACY, SENSORS, WEATHER } from './config/config';
 import { AlertEngine, type ActiveAlert } from './core/AlertEngine';
 import { buildClusters } from './core/ConfidenceEngine';
 import { DetectionEngine } from './core/DetectionEngine';
@@ -27,7 +27,13 @@ import { DEMO_ROUTE_CENTER } from './demo/demoRoute';
 import type { EventCluster, EventType, GeoSample, RoadEvent, SystemStatus } from './core/types';
 import { backendEnabled, fetchNearby, postEvents } from './net/api';
 
+import { DemoWeatherProvider } from './weather/DemoWeatherProvider';
+import { WeatherAlertEngine, type WeatherAlert } from './weather/weatherAlerts';
+import type { WeatherCell } from './weather/WeatherProvider';
+
 import { AlertBanner } from './ui/AlertBanner';
+import { WeatherBanner } from './ui/WeatherBanner';
+import { weatherCellsToOverlays } from './ui/weatherOverlay';
 import { MapView } from './ui/MapView';
 import { ReportSheet } from './ui/ReportSheet';
 import { StatusBar } from './ui/StatusBar';
@@ -47,6 +53,8 @@ export default function App() {
   const [speedMps, setSpeedMps] = useState<number | null>(null);
   const [clusters, setClusters] = useState<EventCluster[]>([]);
   const [alert, setAlert] = useState<ActiveAlert | null>(null);
+  const [weatherAlert, setWeatherAlert] = useState<WeatherAlert | null>(null);
+  const [weatherCells, setWeatherCells] = useState<readonly WeatherCell[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
@@ -64,6 +72,12 @@ export default function App() {
   const sensorRef = useRef<SensorEngine | null>(null);
   const detectRef = useRef<DetectionEngine>(new DetectionEngine());
   const alertRef = useRef<AlertEngine>(new AlertEngine());
+  const weatherEngineRef = useRef<WeatherAlertEngine>(new WeatherAlertEngine());
+  const roadAlertRef = useRef<ActiveAlert | null>(null);
+  const weatherAlertRef = useRef<WeatherAlert | null>(null);
+  /** Le celle in un ref: cosi' `handleGeo` resta stabile fra i render. */
+  const weatherCellsRef = useRef<readonly WeatherCell[]>([]);
+  const weatherTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSyncRef = useRef<{ at: number; lat: number; lon: number } | null>(null);
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -107,6 +121,28 @@ export default function App() {
     return () => {
       engine.stop();
       sensorRef.current = null;
+    };
+  }, [demo]);
+
+  // -- sorgente meteo: ESCLUSIVAMENTE in DEMO MODE -------------------------
+  // Fuori dalla demo non viene nemmeno costruita: nella v0.1.0 ROAD SENSE non
+  // ha alcuna sorgente meteo reale, e NOWCAST non e' collegato.
+  useEffect(() => {
+    if (!demo) {
+      weatherCellsRef.current = [];
+      setWeatherCells([]);
+      setWeatherAlert(null);
+      weatherAlertRef.current = null;
+      return;
+    }
+    const provider = new DemoWeatherProvider();
+    const cells = provider.isAvailable() ? provider.cells() : [];
+    weatherCellsRef.current = cells;
+    setWeatherCells(cells);
+    weatherEngineRef.current.reset();
+    return () => {
+      weatherCellsRef.current = [];
+      setWeatherCells([]);
     };
   }, [demo]);
 
@@ -179,9 +215,37 @@ export default function App() {
         speedMps: geo.speedMps,
       });
       if (next) {
+        roadAlertRef.current = next;
         setAlert(next);
         if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
-        alertTimerRef.current = setTimeout(() => setAlert(null), ALERT.displayMs);
+        alertTimerRef.current = setTimeout(() => {
+          roadAlertRef.current = null;
+          setAlert(null);
+        }, ALERT.displayMs);
+      }
+
+      // Avvisi meteo: solo in demo, e solo se non ne e' gia' visibile uno.
+      // Mostrarne piu' di uno alla volta renderebbe la demo un bollettino.
+      // Un solo banner alla volta: non si emette un avviso meteo finche' ne
+      // e' visibile un altro, meteo o stradale. Altrimenti resterebbe coperto
+      // e la demo perderebbe un passaggio della narrazione.
+      const cells = weatherCellsRef.current;
+      if (cells.length > 0 && weatherAlertRef.current === null && roadAlertRef.current === null) {
+        const weather = weatherEngineRef.current.evaluate(
+          cells,
+          { lat: geo.lat, lon: geo.lon, heading: geo.heading, speedMps: geo.speedMps },
+          current,
+          geo.ts,
+        );
+        if (weather) {
+          weatherAlertRef.current = weather;
+          setWeatherAlert(weather);
+          if (weatherTimerRef.current) clearTimeout(weatherTimerRef.current);
+          weatherTimerRef.current = setTimeout(() => {
+            weatherAlertRef.current = null;
+            setWeatherAlert(null);
+          }, WEATHER.displayMs);
+        }
       }
     },
     [maybeSync],
@@ -250,6 +314,10 @@ export default function App() {
     setStatus((s) => ({ ...s, gps: 'off', sensors: 'off' }));
     setSpeedMps(null);
     setAlert(null);
+    roadAlertRef.current = null;
+    setWeatherAlert(null);
+    weatherAlertRef.current = null;
+    weatherEngineRef.current.reset();
   }, []);
 
   // -- segnalazione manuale -------------------------------------------------
@@ -294,6 +362,7 @@ export default function App() {
     () => () => {
       if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (weatherTimerRef.current) clearTimeout(weatherTimerRef.current);
     },
     [],
   );
@@ -305,6 +374,8 @@ export default function App() {
     setAlert(null);
     setDemo((d) => !d);
   }, [stop]);
+
+  const weatherOverlays = useMemo(() => weatherCellsToOverlays(weatherCells), [weatherCells]);
 
   const speedLabel = useMemo(
     () => (speedMps === null ? '--' : `${Math.round(speedMps * 3.6)} km/h`),
@@ -332,12 +403,29 @@ export default function App() {
           heading={heading}
           follow={follow && running}
           initialView={demo ? { ...DEMO_ROUTE_CENTER, zoom: 14.5 } : null}
+          followZoom={demo ? MAP.followZoomDemo : MAP.followZoom}
           // Tracciato della demo: linea sottile, visibile SOLO in ?demo=1.
           // Per rimuoverla basta non passare questa prop.
           routeOverlay={demo ? DEMO_ROUTE : null}
+          // Celle meteo simulate: esistono solo in demo.
+          areaOverlays={demo ? weatherOverlays : null}
           onMapMovedByUser={() => setFollow(false)}
         />
         <AlertBanner alert={alert} onDismiss={() => setAlert(null)} />
+        {/* Un solo banner alla volta: l'avviso stradale ha la precedenza,
+            perche' riguarda cio' che c'e' gia' sull'asfalto. */}
+        {alert === null && (
+          <WeatherBanner
+            alert={weatherAlert}
+            onDismiss={() => {
+              weatherAlertRef.current = null;
+              setWeatherAlert(null);
+            }}
+          />
+        )}
+        {demo && weatherCells.length > 0 && (
+          <div className="sim-badge">ROAD WEATHER · SIMULAZIONE</div>
+        )}
         {toast && <div className="toast">{toast}</div>}
       </div>
 

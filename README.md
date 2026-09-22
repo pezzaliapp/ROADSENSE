@@ -97,6 +97,30 @@ lo sviluppo il percorso previsto.
 > posizione fornita dal dispositivo, senza alcun aggancio alla rete stradale.
 > Un test lo verifica.
 
+### ROAD WEATHER — simulazione visiva (solo demo)
+
+La demo mostra anche come potrebbe funzionare un'integrazione futura con una
+sorgente meteo, sotto forma di aree semitrasparenti in movimento sul percorso:
+
+```
+ROAD SENSE   dice cosa c'è SULLA strada
+NOWCAST      direbbe cosa sta arrivando SOPRA la strada
+insieme      avvisano prima di arrivarci
+```
+
+L'esempio più importante è la **correlazione**: dove una cella di pioggia
+intensa coincide con segnalazioni ROAD SENSE di acqua sulla carreggiata,
+l'avviso non è più una previsione ma una previsione **confermata da ciò che
+accade sull'asfalto** — e ha la precedenza su una previsione non confermata,
+anche se più vicina.
+
+> **NOWCAST NON è collegato a ROAD SENSE.** Non esistono API, connessioni,
+> backend o dipendenze. `DemoWeatherProvider` genera dati inventati in locale,
+> in modo sincrono; `NowcastWeatherProvider` è uno **stub** che non effettua
+> alcuna connessione. Tutto il meteo esiste **esclusivamente in DEMO MODE**, è
+> etichettato `ROAD WEATHER · SIMULAZIONE` e ha una grafica deliberatamente
+> diversa da quella degli eventi stradali. I test lo verificano.
+
 > Gli eventi demo sono marcati `demo: true`, salvati in una chiave di storage
 > separata e **rifiutati dalla validazione lato backend**: non possono
 > contaminare i dati reali.
@@ -388,6 +412,7 @@ Coprono la logica critica e i percorsi degradati:
 - `mapProviders.test.ts` — attribuzione obbligatoria, HTTPS, coerenza con la CSP, service worker che non memorizza cartografia
 - `degradation.test.ts` — sensori mancanti, compensazione orientamento, backend assente, stub
 - `demoRoute.test.ts` — validità del tracciato, moto lungo le strade, velocità e direzione, eventi sulla carreggiata, riavvio del giro, GPS reale non toccato
+- `weather.test.ts` — meteo assente fuori dalla demo, nessuna richiesta di rete, stub NOWCAST inerte, aree che intersecano il percorso, distanze di preavviso, correlazione fra sorgenti
 - `demoPipeline.test.ts` — catena completa in DEMO MODE a tempo simulato
 
 ---
