@@ -169,9 +169,14 @@ button {
 .rs-marker.confirmed { opacity: 1; box-shadow: 0 0 0 3px rgba(255, 176, 32, 0.18); }
 
 /* posizione utente: MapLibre centra l'elemento sul punto, quindi la freccia
-   di direzione ruota attorno al centro del contenitore. */
+   di direzione ruota attorno al centro del contenitore.
+   ATTENZIONE: qui NON va impostato `position`. MapLibre posiziona i propri
+   marker con `.maplibregl-marker { position: absolute }` e li sposta via
+   `transform`. Dichiarare `position: relative` li toglieva dal posizionamento
+   assoluto e li faceva impilare nel flusso, spostandoli visibilmente fuori
+   dalla strada. I figli assoluti trovano comunque il loro contenitore, perche'
+   il marker e' gia' un elemento posizionato. */
 .rs-me-wrap {
-  position: relative;
   width: 22px;
   height: 22px;
   display: grid;
@@ -313,65 +318,59 @@ button {
 
 /* ---------- veicoli ROAD SENSE simulati (solo demo) ---------- */
 
-/* Deliberatamente piu' piccoli e spenti del veicolo principale: la mappa deve
-   dire a colpo d'occhio chi sei tu e chi sono gli altri. */
+/* L'icona e' un'automobile vista dall'alto, CENTRATA sul punto geografico.
+   La versione precedente era un triangolo che sporgeva 8 px sopra il centro:
+   a zoom 15 sono quasi 30 metri, ed e' il motivo per cui i veicoli sembravano
+   muoversi fuori dalla carreggiata. */
+/* Come sopra: nessun `position` su un elemento marker di MapLibre. */
 .rs-peer-wrap {
-  position: relative;
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 22px;
   display: grid;
   place-items: center;
 }
 
-.rs-peer {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #8b97a5;
-  border: 2px solid #0b0e11;
-}
-
-.rs-peer-arrow {
-  position: absolute;
-  inset: 0;
+.rs-peer-car {
+  width: 13px;
+  height: 22px;
   transform-origin: 50% 50%;
+  /* Il muso dell'icona punta verso l'alto, come heading 0 = nord:
+     nessuna correzione angolare. */
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9));
 }
 
-.rs-peer-arrow::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: -8px;
-  width: 0;
-  height: 0;
-  margin-left: -4px;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-bottom: 7px solid #8b97a5;
-}
-
-/* Alone colorato quando il veicolo si trova dentro un'area meteo. */
+/* Alone colorato quando il veicolo si trova dentro un'area meteo.
+   Centrato esplicitamente: con i soli offset automatici finiva in alto a
+   sinistra, fuori asse rispetto al veicolo. */
 .rs-peer-halo {
   position: absolute;
+  left: 50%;
+  top: 50%;
   width: 30px;
   height: 30px;
+  margin: -15px 0 0 -15px;
   border-radius: 50%;
   border: 1px solid transparent;
   opacity: 0;
   transition: opacity 0.4s ease;
 }
 
-/* Rilevamento: un breve impulso sul marker, non un pannello. */
-.rs-peer-wrap.detecting .rs-peer {
-  background: var(--accent);
+/* Rilevamento: un breve impulso attorno all'auto, non un pannello. */
+.rs-peer-wrap.detecting::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
   animation: rs-pulse 0.9s ease-out infinite;
 }
 
-.rs-peer-wrap.detecting .rs-peer-arrow::before { border-bottom-color: var(--accent); }
-
 @keyframes rs-pulse {
   0% { box-shadow: 0 0 0 0 rgba(255, 176, 32, 0.55); }
-  100% { box-shadow: 0 0 0 14px rgba(255, 176, 32, 0); }
+  100% { box-shadow: 0 0 0 16px rgba(255, 176, 32, 0); }
 }
 
 .rs-peer-flash {
@@ -379,7 +378,7 @@ button {
   /* Centrata SOPRA il veicolo, non di lato: affiancata usciva dallo schermo
      ogni volta che il veicolo si trovava sul bordo destro della mappa. */
   left: 50%;
-  bottom: 20px;
+  bottom: 24px;
   transform: translateX(-50%);
   padding: 2px 6px;
   border-radius: 4px;
@@ -422,15 +421,24 @@ button {
 
 .demo-legend .row.sim { color: #6f7b88; }
 
+/* I simboli della legenda sono gli STESSI disegnati sulla mappa: il pallino
+   blu del veicolo principale e l'icona dell'automobile. */
 .demo-legend .k {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
   flex: 0 0 auto;
 }
 
-.demo-legend .k.me { background: #3da5ff; }
-.demo-legend .k.peer { background: #8b97a5; margin-left: 6px; }
+.demo-legend .k.me {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #3da5ff;
+  border: 2px solid #0b0e11;
+  box-shadow: 0 0 0 1px rgba(61, 165, 255, 0.5);
+}
+
+.demo-legend .k.peer { margin-left: 8px; }
 
 /* Etichetta permanente: i dati meteo mostrati sono simulati.
    Ora e' una riga della legenda della demo, qui sopra. */

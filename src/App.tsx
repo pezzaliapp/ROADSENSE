@@ -21,6 +21,7 @@ import { getAnonId, newEventId } from './core/anonId';
 import { buildDemoEvents } from './core/demoSeed';
 import { distanceM, roundCoord } from './core/geo';
 import { WEATHER_META } from './ui/weatherMeta';
+import { CAR_COLOR, CarGlyph } from './ui/vehicleIcon';
 import { PhoneSensorProvider } from './core/sensors/PhoneSensorProvider';
 import { DemoSensorProvider } from './core/sensors/DemoSensorProvider';
 import { DEMO_ROUTE } from './demo/demoRoute';
@@ -506,8 +507,13 @@ export default function App() {
                 davvero: una legenda che spiega cose non visibili confonde. */}
             {running && (
               <div className="row">
+                {/* Gli stessi simboli disegnati sulla mappa, non due pallini
+                    generici: la legenda deve spiegare cio' che si vede. */}
                 <span className="k me" /> TU
-                <span className="k peer" /> VEICOLO ROAD SENSE · SIMULATO
+                <span className="k peer">
+                  <CarGlyph color={CAR_COLOR.peer} />
+                </span>{' '}
+                VEICOLO ROAD SENSE · SIMULATO
               </div>
             )}
             {weatherCells.length > 0 && <div className="row sim">ROAD WEATHER · SIMULAZIONE</div>}

@@ -57,6 +57,7 @@ import { destinationPoint } from '../core/geo';
 import type { EventCluster } from '../core/types';
 import type { AreaOverlay } from './areaOverlay';
 import { EVENT_META } from './eventMeta';
+import { CAR_COLOR, createCarSvg, setCarBodyColor } from './vehicleIcon';
 
 /** Veicolo secondario disegnato sulla mappa. */
 export interface PeerVehicle {
@@ -382,23 +383,33 @@ export function MapView({
       if (!entry) {
         const el = document.createElement('div');
         el.className = 'rs-peer-wrap';
+
         const halo = document.createElement('div');
         halo.className = 'rs-peer-halo';
-        const arrow = document.createElement('div');
-        arrow.className = 'rs-peer-arrow';
-        const dot = document.createElement('div');
-        dot.className = 'rs-peer';
+
+        // L'auto sta in un contenitore proprio: e' questo a ruotare.
+        // Il marker esterno non puo' essere ruotato, perche' MapLibre ne
+        // sovrascrive la trasformazione a ogni spostamento.
+        const car = document.createElement('div');
+        car.className = 'rs-peer-car';
+        car.appendChild(createCarSvg(CAR_COLOR.peer));
+
+        // L'etichetta e' sorella del contenitore ruotato, non figlia: deve
+        // restare leggibile qualunque sia la direzione di marcia.
         const flash = document.createElement('div');
         flash.className = 'rs-peer-flash';
-        el.append(halo, arrow, dot, flash);
+
+        el.append(halo, car, flash);
         entry = { marker: new Marker({ element: el }).setLngLat([v.lon, v.lat]).addTo(map), el };
         markers.set(v.id, entry);
       } else {
         entry.marker.setLngLat([v.lon, v.lat]);
       }
 
-      const arrow = entry.el.querySelector<HTMLElement>('.rs-peer-arrow');
-      if (arrow) arrow.style.transform = `rotate(${v.heading}deg)`;
+      const car = entry.el.querySelector<HTMLElement>('.rs-peer-car');
+      if (car) car.style.transform = `rotate(${v.heading}deg)`;
+      const svg = entry.el.querySelector('svg');
+      if (svg) setCarBodyColor(svg, v.flash ? CAR_COLOR.detecting : CAR_COLOR.peer);
 
       const halo = entry.el.querySelector<HTMLElement>('.rs-peer-halo');
       if (halo) {

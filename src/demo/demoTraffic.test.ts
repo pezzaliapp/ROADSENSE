@@ -271,6 +271,40 @@ describe('rilevamento e conferma', () => {
   });
 });
 
+describe('rappresentazione dei veicoli sulla mappa', () => {
+  const css = readFileSync(resolve(ROOT, 'src', 'styles.css'), 'utf8');
+  const mapView = readFileSync(resolve(ROOT, 'src', 'ui', 'MapView.tsx'), 'utf8');
+  const app = readFileSync(resolve(ROOT, 'src', 'App.tsx'), 'utf8');
+
+  /** Estrae il corpo di una regola CSS. */
+  const rule = (selector: string): string => {
+    const i = css.indexOf(`${selector} {`);
+    expect(i).toBeGreaterThan(-1);
+    return css.slice(i, css.indexOf('}', i));
+  };
+
+  it('i marker non dichiarano `position`: e\' di MapLibre', () => {
+    // MapLibre posiziona i propri marker con `position: absolute` e li sposta
+    // via `transform`. Dichiarare `position` sull'elemento del marker li
+    // toglieva dal posizionamento assoluto e li faceva impilare nel flusso:
+    // i veicoli apparivano decine di metri fuori dalla carreggiata pur
+    // essendo, nei dati, esattamente sul tracciato.
+    expect(rule('.rs-peer-wrap')).not.toMatch(/position\s*:/);
+    expect(rule('.rs-me-wrap')).not.toMatch(/position\s*:/);
+  });
+
+  it('i veicoli simulati sono disegnati come automobili viste dall\'alto', () => {
+    expect(mapView).toMatch(/createCarSvg\(CAR_COLOR\.peer\)/);
+    // L'icona ruota su un contenitore interno: il marker esterno non puo'
+    // essere ruotato, perche' MapLibre ne sovrascrive la trasformazione.
+    expect(mapView).toMatch(/car\.style\.transform = `rotate\(\$\{v\.heading\}deg\)`/);
+  });
+
+  it('la legenda usa lo stesso simbolo disegnato sulla mappa', () => {
+    expect(app).toMatch(/<CarGlyph color=\{CAR_COLOR\.peer\} \/>/);
+  });
+});
+
 describe('attraversamento del punto di rilevamento', () => {
   it('riconosce il passaggio normale', () => {
     expect(DemoVehicle.crossed(100, 200, 150)).toBe(true);
