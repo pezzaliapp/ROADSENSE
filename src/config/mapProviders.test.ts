@@ -78,6 +78,28 @@ describe('fornitori cartografici', () => {
   });
 });
 
+describe('worker di MapLibre', () => {
+  // Questo e' il bug che rendeva la mappa completamente nera: MapLibre 6
+  // carica il proprio worker da un file separato, che senza queste due
+  // impostazioni non viene emesso dalla build. Il fallimento e' invisibile ai
+  // test di logica - nessun dato viene decodificato e basta - quindi qui si
+  // verifica la configurazione.
+  const root = resolve(import.meta.dirname, '..', '..');
+  const mapView = readFileSync(resolve(root, 'src', 'ui', 'MapView.tsx'), 'utf8');
+  const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
+
+  it('il worker viene importato come chunk a se\' stante e passato a MapLibre', () => {
+    expect(mapView).toMatch(/maplibre-gl-worker\.mjs\?worker&url/);
+    expect(mapView).toMatch(/setWorkerUrl\(/);
+  });
+
+  it('i worker sono costruiti come moduli ES', () => {
+    // MapLibre istanzia il worker con `{ type: 'module' }`: con il formato
+    // iife predefinito di Vite il caricamento fallirebbe.
+    expect(viteConfig).toMatch(/worker:\s*\{\s*format:\s*'es'\s*\}/);
+  });
+});
+
 describe('service worker', () => {
   const source = readFileSync(
     resolve(import.meta.dirname, '..', '..', 'public', 'sw.js'),

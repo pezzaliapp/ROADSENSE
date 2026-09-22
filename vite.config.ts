@@ -7,6 +7,10 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: { host: true, port: 5173 },
+  // MapLibre istanzia il proprio worker con `{ type: 'module' }`: il chunk
+  // emesso da Vite deve quindi essere un modulo ES, non il formato iife
+  // predefinito.
+  worker: { format: 'es' },
   preview: { host: true, port: 4173 },
   build: {
     target: 'es2022',

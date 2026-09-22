@@ -60,6 +60,30 @@ monte, e l'assenza del backend non interrompe nulla.
 
 Dipendenze di produzione totali: **3** (`react`, `react-dom`, `maplibre-gl`).
 
+### Una trappola della build, documentata
+
+MapLibre 6 **non incorpora** il proprio worker nel bundle: lo carica da
+`./maplibre-gl-worker.mjs`, risolto rispetto a `import.meta.url`. Dopo il
+bundling quel percorso diventa `/assets/maplibre-gl-worker.mjs`, che non
+esiste: il server risponde con il fallback SPA e il worker muore con
+*"Failed to load module script: non-JavaScript MIME type of text/html"*.
+
+Il sintomo è insidioso: la mappa si inizializza, i controlli compaiono, lo
+stile viene richiesto — ma **nessuna tile viene decodificata** e la mappa
+resta nera. Nessun test di logica può accorgersene.
+
+Servono due cose, entrambe protette da test:
+
+```ts
+// MapView.tsx — Vite costruisce il worker come chunk e ne dà l'URL
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+setWorkerUrl(workerUrl);
+```
+```ts
+// vite.config.ts — MapLibre lo istanzia con { type: 'module' }
+worker: { format: 'es' },
+```
+
 ---
 
 ## 4. SensorProvider — astrazione vendor-neutral

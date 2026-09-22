@@ -20,13 +20,36 @@
 import { useEffect, useMemo, useRef } from 'react';
 // maplibre-gl v6 espone solo export nominali: nessun export di default.
 import {
-  AttributionControl,
   Map as MapLibreMap,
   Marker,
   NavigationControl,
+  setWorkerUrl,
   type StyleSpecification,
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+
+/**
+ * MapLibre GL 6 non incorpora il proprio worker nel bundle principale: lo
+ * carica da un file separato, calcolando l'URL come
+ * `new URL('./maplibre-gl-worker.mjs', import.meta.url)`.
+ *
+ * Dopo il bundling quell'URL diventa `/assets/maplibre-gl-worker.mjs`, un file
+ * che non esiste: il server risponde con il fallback SPA (`index.html`) e il
+ * caricamento del modulo fallisce con
+ *   "Failed to load module script: ... non-JavaScript MIME type of text/html".
+ *
+ * Senza worker nessuna tile viene decodificata: la mappa resta nera pur
+ * inizializzandosi correttamente.
+ *
+ * `?worker&url` chiede a Vite di costruire il worker come chunk a se' stante
+ * - risolvendo anche il suo import di `maplibre-gl-shared.mjs` - e di
+ * restituirne l'URL con hash, che passiamo a MapLibre.
+ * Richiede `worker.format: 'es'` in vite.config.ts, perche' MapLibre lo
+ * istanzia con `{ type: 'module' }`.
+ */
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+
+setWorkerUrl(maplibreWorkerUrl);
 
 import { ACTIVE_MAP_PROVIDER, MAP, type MapTileProvider } from '../config/config';
 import { confidenceLevel } from '../core/ConfidenceEngine';
@@ -38,6 +61,12 @@ interface Props {
   position: { lat: number; lon: number } | null;
   heading: number | null;
   follow: boolean;
+  /**
+   * Vista di partenza. Serve soprattutto alla DEMO MODE, che deve mostrare
+   * subito l'anello simulato invece di aprirsi su tutta l'Italia.
+   * Se assente si usa il fallback di `MAP`.
+   */
+  initialView?: { lat: number; lon: number; zoom: number } | null;
   onMapMovedByUser?: () => void;
 }
 
@@ -67,7 +96,14 @@ function styleFor(provider: MapTileProvider): string | StyleSpecification {
   };
 }
 
-export function MapView({ clusters, position, heading, follow, onMapMovedByUser }: Props) {
+export function MapView({
+  clusters,
+  position,
+  heading,
+  follow,
+  initialView,
+  onMapMovedByUser,
+}: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -85,10 +121,16 @@ export function MapView({ clusters, position, heading, follow, onMapMovedByUser 
     const map = new MapLibreMap({
       container: containerRef.current,
       style: styleFor(provider),
-      center: [MAP.fallbackCenter[1], MAP.fallbackCenter[0]], // MapLibre usa [lon, lat]
-      zoom: MAP.fallbackZoom,
+      // MapLibre usa [lon, lat].
+      center: initialView
+        ? [initialView.lon, initialView.lat]
+        : [MAP.fallbackCenter[1], MAP.fallbackCenter[0]],
+      zoom: initialView ? initialView.zoom : MAP.fallbackZoom,
       minZoom: MAP.minZoom,
       maxZoom: Math.min(MAP.maxZoom, provider.maxZoom),
+      // Un solo controllo di attribuzione: quello integrato. L'attribuzione
+      // arriva dai dati (dallo stile per il vettoriale, dalla sorgente per il
+      // raster), che e' la sua collocazione corretta.
       attributionControl: { compact: true },
       // Nessuna dissolvenza: meno fotogrammi, meno batteria.
       fadeDuration: 0,
@@ -101,15 +143,30 @@ export function MapView({ clusters, position, heading, follow, onMapMovedByUser 
     map.touchZoomRotate.disableRotation();
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
 
-    // L'attribuzione del fornitore vettoriale arriva dallo stile; per il raster
-    // e' gia' nella sorgente. Questo la garantisce in entrambi i casi.
-    map.addControl(
-      new AttributionControl({ compact: true, customAttribution: provider.attribution }),
-    );
-
     map.on('load', () => {
       readyRef.current = true;
+      // Garanzia: l'attribuzione non e' rimovibile. Se per qualunque motivo la
+      // sorgente non ne dichiarasse una, si inserisce quella del fornitore.
+      // Nel caso normale non fa nulla, quindi non puo' duplicarla.
+      const box = map.getContainer().querySelector('.maplibregl-ctrl-attrib-inner');
+      if (box && box.textContent !== null && box.textContent.trim().length === 0) {
+        box.innerHTML = provider.attribution;
+      }
     });
+    // Uno stile di terze parti puo' riferirsi a immagini assenti dal proprio
+    // sprite: lo stile "dark" di OpenFreeMap richiede `circle-11` e
+    // `wood-pattern`, che non ci sono. Senza gestore MapLibre segnala un
+    // errore per ognuna.
+    //
+    // Si registra un'immagine TRASPARENTE, non un segnaposto disegnato:
+    // ROAD SENSE non inventa grafica per conto di un fornitore. L'effetto
+    // visivo e' identico a quello attuale (il simbolo semplicemente non c'e'),
+    // ma lo stile smette di segnalare errori.
+    map.on('styleimagemissing', (e) => {
+      if (map.hasImage(e.id)) return;
+      map.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
+    });
+
     map.on('dragstart', () => onMapMovedByUser?.());
 
     mapRef.current = map;

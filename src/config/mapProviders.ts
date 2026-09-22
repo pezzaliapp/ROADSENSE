@@ -68,6 +68,12 @@ export type MapTileProvider = VectorTileProvider | RasterTileProvider;
  *
  * Nota sulla sostenibilita': il servizio e' sostenuto da donazioni ricorrenti.
  * E' una ragione in piu' perche' questa astrazione esista.
+ *
+ * Difetto noto dello stile (non di ROAD SENSE): i layer `place_city`,
+ * `place_town` e le aree boschive richiedono le immagini `circle-11` e
+ * `wood-pattern`, che non sono presenti nello sprite pubblicato. MapView
+ * registra un'immagine trasparente per le immagini mancanti, cosi' lo stile
+ * non segnala errori. Nessun effetto sulla leggibilita' della mappa.
  */
 export const OPENFREEMAP_DARK: VectorTileProvider = {
   kind: 'vector',

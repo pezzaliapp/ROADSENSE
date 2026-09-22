@@ -327,10 +327,14 @@ export default function App() {
 
       <div className="map-wrap">
         <MapView
+          // Il cambio di modalita' rimonta la mappa, cosi' riparte dalla
+          // vista giusta invece di restare dove si trovava.
+          key={demo ? 'demo' : 'live'}
           clusters={clusters}
           position={position}
           heading={heading}
           follow={follow && running}
+          initialView={demo ? { ...DEMO_CENTER, zoom: 13 } : null}
           onMapMovedByUser={() => setFollow(false)}
         />
         <AlertBanner alert={alert} onDismiss={() => setAlert(null)} />
