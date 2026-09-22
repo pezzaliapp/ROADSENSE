@@ -140,8 +140,7 @@ describe('backend non disponibile', () => {
 
 describe('modalita\' demo', () => {
   it('genera eventi marcati demo e aggregabili', () => {
-    const center = { lat: 45.4642, lon: 9.19 };
-    const events = buildDemoEvents(center, 900);
+    const events = buildDemoEvents();
     expect(events.length).toBeGreaterThan(5);
     expect(events.every((e) => e.demo === true)).toBe(true);
 
@@ -154,7 +153,7 @@ describe('modalita\' demo', () => {
   });
 
   it('gli eventi demo sono tutti riconoscibili come tali nei cluster', () => {
-    const clusters = buildClusters(buildDemoEvents({ lat: 45.4642, lon: 9.19 }, 900));
+    const clusters = buildClusters(buildDemoEvents());
     expect(clusters.every((c) => c.demo === true)).toBe(true);
   });
 });

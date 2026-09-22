@@ -188,6 +188,12 @@ export const MAP = {
   fallbackCenter: [41.9, 12.5] as [number, number],
   fallbackZoom: 5.5,
   followZoom: 16.5,
+  /**
+   * Durata dello scorrimento con cui la mappa segue il veicolo, ms.
+   * Coincide con l'intervallo tra due posizioni GPS: il movimento risulta
+   * continuo invece che a scatti.
+   */
+  followEaseMs: 950,
   minZoom: 3,
   maxZoom: 19,
 } as const;
@@ -221,6 +227,56 @@ export const API = {
   /** Distanza percorsa che forza una nuova sincronizzazione, m. */
   syncDistanceM: 2000,
   timeoutMs: 8000,
+} as const;
+
+// ---------------------------------------------------------------------------
+// DEMO MODE
+// ---------------------------------------------------------------------------
+/**
+ * Parametri dello scenario simulato. La demo serve a verificare la catena
+ * GPS -> percorso -> evento -> distanza -> direzione -> confidenza -> alert
+ * senza guidare, quindi deve somigliare alla guida urbana reale.
+ */
+export const DEMO = {
+  /** Velocita' simulata: guida urbana. */
+  minSpeedMps: 20 / 3.6,
+  maxSpeedMps: 50 / 3.6,
+  /**
+   * Periodo dell'oscillazione di velocita', in metri percorsi. Una variazione
+   * legata alla distanza, non al tempo, resta coerente anche se cambia la
+   * frequenza dei campioni.
+   */
+  speedPeriodM: 700,
+  /** Quanto si rallenta in curva, come frazione massima di velocita' persa. */
+  turnSlowdown: 0.55,
+  /** Distanza entro cui si "vede" la curva in arrivo, in metri. */
+  turnLookaheadM: 45,
+  /**
+   * Costante di tempo del filtro che rende graduali i cambi di velocita', in
+   * secondi. E' espressa nel tempo e non "per campione" di proposito: cosi' il
+   * comportamento non cambia se cambia la frequenza di campionamento.
+   * Con 3 s una variazione di 6 m/s viene assorbita in poco meno di 2 m/s al
+   * secondo, circa 0.2 g: una guida tranquilla.
+   */
+  speedTimeConstantS: 3,
+  /** Frequenza dei campioni di movimento simulati, Hz. */
+  motionHz: 50,
+  /** Intervallo tra due posizioni simulate, ms: come un GPS reale. */
+  geoIntervalMs: 1000,
+  /** Precisione dichiarata dalle posizioni simulate, m. */
+  accuracyM: 8,
+  /** Rumore di fondo dell'asfalto simulato, ampiezza in m/s^2. */
+  roadNoise: 1.2,
+  /**
+   * Anomalie lungo il percorso, come frazione della lunghezza totale.
+   * `peak` e' il picco verticale in m/s^2, `durationMs` la durata dell'impulso.
+   */
+  anomalies: [
+    { at: 0.13, peak: 6.5, durationMs: 120 },
+    { at: 0.36, peak: 9.5, durationMs: 160 },
+    { at: 0.61, peak: 4.2, durationMs: 90 },
+    { at: 0.84, peak: 7.8, durationMs: 140 },
+  ],
 } as const;
 
 // ---------------------------------------------------------------------------

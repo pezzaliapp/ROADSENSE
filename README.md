@@ -78,9 +78,24 @@ http://localhost:5173/?demo=1
 
 oppure il pulsante **DEMO** nella barra di stato.
 
-La DEMO MODE simula un veicolo che percorre un anello a 50 km/h, con anomalie
-lungo il percorso ed eventi già segnalati da altri utenti fittizi. Serve a
-vedere rilevamento, aggregazione, confidenza crescente e alert senza muoversi.
+La DEMO MODE simula un'automobile che percorre un **itinerario stradale reale**
+a Milano: 5,76 km di strade realmente esistenti, con velocità urbana variabile
+(20–50 km/h), rallentamenti in curva, anomalie lungo il tragitto ed eventi già
+segnalati da altri utenti fittizi, collocati sulla carreggiata. Serve a vedere
+rilevamento, aggregazione, confidenza crescente e alert senza muoversi.
+
+Il percorso è congelato in [`src/demo/demoRoute.ts`](src/demo/demoRoute.ts),
+estratto **una sola volta in fase di sviluppo** dalla geometria OpenStreetMap
+contenuta nelle vector tile. A runtime la demo è quindi **completamente
+offline e deterministica**: nessun servizio di routing, nessuna chiave API,
+nessun account, nessuna rete. Si rigenera con `npm run demo:route`.
+
+In `?demo=1` il tracciato è disegnato come una linea sottile, per vedere durante
+lo sviluppo il percorso previsto.
+
+> Il GPS **reale** non è toccato: `PhoneSensorProvider` continua a restituire la
+> posizione fornita dal dispositivo, senza alcun aggancio alla rete stradale.
+> Un test lo verifica.
 
 > Gli eventi demo sono marcati `demo: true`, salvati in una chiave di storage
 > separata e **rifiutati dalla validazione lato backend**: non possono
@@ -372,6 +387,7 @@ Coprono la logica critica e i percorsi degradati:
 - `anonId.test.ts` — formato, rotazione, unicità
 - `mapProviders.test.ts` — attribuzione obbligatoria, HTTPS, coerenza con la CSP, service worker che non memorizza cartografia
 - `degradation.test.ts` — sensori mancanti, compensazione orientamento, backend assente, stub
+- `demoRoute.test.ts` — validità del tracciato, moto lungo le strade, velocità e direzione, eventi sulla carreggiata, riavvio del giro, GPS reale non toccato
 - `demoPipeline.test.ts` — catena completa in DEMO MODE a tempo simulato
 
 ---

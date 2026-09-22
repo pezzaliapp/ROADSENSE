@@ -1,49 +1,42 @@
 /**
  * ROAD SENSE - DEMO / SIMULATION MODE.
  *
- * Permette di provare ROAD SENSE dal Mac, senza guidare e senza sensori.
- * Simula un veicolo che percorre un anello, con anomalie posizionate lungo il
- * percorso e altri "utenti" che hanno gia' segnalato alcuni punti.
+ * Simula un'automobile che percorre un ITINERARIO STRADALE REALE: il tracciato
+ * congelato in `src/demo/demoRoute.ts`, ricavato una sola volta dalla
+ * geometria OpenStreetMap e incluso nel progetto. A runtime non serve alcun
+ * servizio di routing, alcuna chiave o alcuna rete: la demo e' completamente
+ * offline e deterministica.
+ *
+ * COSA SIMULA
+ * - posizione lungo il percorso, interpolata con continuita';
+ * - velocita' urbana (20-50 km/h) con variazioni graduali e rallentamento
+ *   prima delle curve;
+ * - direzione di marcia calcolata dai punti consecutivi del percorso;
+ * - rumore di fondo dell'asfalto e impulsi da buca in punti prestabiliti.
+ *
+ * Al termine del percorso la demo ricomincia dall'inizio senza discontinuita':
+ * il tracciato e' un anello chiuso.
  *
  * ISOLAMENTO DEI DATI
  * Gli eventi generati in demo sono marcati `demo: true`, salvati in una chiave
- * di storage separata e rifiutati dalla validazione lato backend. Non possono
- * in alcun modo contaminare i dati reali.
+ * di storage separata e rifiutati dalla validazione lato backend.
+ *
+ * Questo provider NON tocca in alcun modo il GPS reale: `PhoneSensorProvider`
+ * e' un'implementazione separata della stessa interfaccia.
  */
 
-import { destinationPoint, normalizeDeg } from '../geo';
+import { DEMO } from '../../config/config';
+import { positionAtDistance, ROUTE_LENGTH_M, turnAheadDeg, wrapDistance } from '../../demo/route';
 import type { GeoSample, SensorCapabilities, SensorSample } from '../types';
 import type { SensorProvider, SensorProviderEvents } from './SensorProvider';
 
-/** Anomalia piazzata lungo il percorso simulato. */
-interface ScriptedAnomaly {
-  /** Posizione lungo l'anello, 0..1. */
-  at: number;
-  /** Ampiezza del picco verticale, m/s^2. */
-  peak: number;
-  /** Durata dell'impulso, ms. */
-  durationMs: number;
-}
-
 export interface DemoOptions {
-  center?: { lat: number; lon: number };
-  /** Raggio dell'anello percorso, metri. */
-  radiusM?: number;
-  /** Velocita' simulata, m/s (default ~50 km/h). */
-  speedMps?: number;
-  /** Frequenza dei campioni di movimento, Hz. */
+  /** Distanza di partenza lungo il percorso, in metri. */
+  startDistanceM?: number;
+  /** Forza una velocita' costante. Usato dai test; di norma non impostato. */
+  fixedSpeedMps?: number;
   motionHz?: number;
 }
-
-const DEFAULT_CENTER = { lat: 45.4642, lon: 9.19 }; // Milano, centro di comodo
-
-/** Anomalie fisse: percorrendo l'anello si incontrano sempre negli stessi punti. */
-const ANOMALIES: ScriptedAnomaly[] = [
-  { at: 0.12, peak: 6.5, durationMs: 120 }, // buca media
-  { at: 0.34, peak: 9.5, durationMs: 160 }, // buca grave
-  { at: 0.58, peak: 4.2, durationMs: 90 }, // buca lieve
-  { at: 0.81, peak: 7.8, durationMs: 140 }, // buca grave
-];
 
 export class DemoSensorProvider implements SensorProvider {
   readonly id = 'demo';
@@ -53,22 +46,25 @@ export class DemoSensorProvider implements SensorProvider {
   private timer: ReturnType<typeof setInterval> | null = null;
   private geoTimer: ReturnType<typeof setInterval> | null = null;
 
-  private center: { lat: number; lon: number };
-  private radiusM: number;
-  private speedMps: number;
-  private motionHz: number;
+  /** Distanza percorsa lungo il tracciato, in metri. */
+  private traveled: number;
+  /** Velocita' corrente, m/s. Filtrata per evitare scatti. */
+  private speed: number;
+  private readonly fixedSpeed: number | null;
+  private readonly motionHz: number;
 
-  /** Posizione lungo l'anello, 0..1. */
-  private progress = 0;
-  /** Anomalia attualmente in riproduzione. */
+  /** Impulso attualmente in riproduzione. */
   private firing: { until: number; peak: number } | null = null;
-  private armed = new Set<number>();
+  /** Anomalie gia' scattate nel giro corrente. */
+  private fired = new Set<number>();
+  /** Giro corrente: serve a ri-armare le anomalie a ogni passaggio. */
+  private lap = 0;
 
   constructor(options: DemoOptions = {}) {
-    this.center = options.center ?? DEFAULT_CENTER;
-    this.radiusM = options.radiusM ?? 900;
-    this.speedMps = options.speedMps ?? 14;
-    this.motionHz = options.motionHz ?? 50;
+    this.traveled = wrapDistance(options.startDistanceM ?? 0);
+    this.fixedSpeed = options.fixedSpeedMps ?? null;
+    this.motionHz = options.motionHz ?? DEMO.motionHz;
+    this.speed = this.fixedSpeed ?? (DEMO.minSpeedMps + DEMO.maxSpeedMps) / 2;
   }
 
   async probe(): Promise<SensorCapabilities> {
@@ -87,19 +83,12 @@ export class DemoSensorProvider implements SensorProvider {
 
   async start(handlers: SensorProviderEvents): Promise<void> {
     this.handlers = handlers;
-    this.progress = 0;
-    this.armed.clear();
+    this.fired.clear();
+    this.lap = 0;
 
-    const motionInterval = Math.round(1000 / this.motionHz);
-    const circumference = 2 * Math.PI * this.radiusM;
-
-    this.timer = setInterval(() => {
-      this.progress = (this.progress + (this.speedMps * (motionInterval / 1000)) / circumference) % 1;
-      this.emitMotion();
-    }, motionInterval);
-
-    // Il GPS reale aggiorna circa una volta al secondo: la demo fa lo stesso.
-    this.geoTimer = setInterval(() => this.emitGeo(), 1000);
+    const motionInterval = Math.max(1, Math.round(1000 / this.motionHz));
+    this.timer = setInterval(() => this.tick(motionInterval / 1000), motionInterval);
+    this.geoTimer = setInterval(() => this.emitGeo(), DEMO.geoIntervalMs);
     this.emitGeo();
   }
 
@@ -112,29 +101,100 @@ export class DemoSensorProvider implements SensorProvider {
     this.firing = null;
   }
 
-  /** Posizione corrente lungo l'anello. */
+  // -- stato osservabile (usato dalla UI e dai test) ------------------------
+
+  /** Posizione e direzione correnti lungo il percorso. */
   position(): { lat: number; lon: number; heading: number } {
-    const angle = this.progress * 360;
-    const p = destinationPoint(this.center, angle, this.radiusM);
-    // Percorrendo un cerchio in senso orario la direzione e' tangente.
-    return { lat: p.lat, lon: p.lon, heading: normalizeDeg(angle + 90) };
+    return positionAtDistance(this.traveled);
   }
 
-  /** Inietta manualmente un urto (pulsante "simula buca"). */
+  /** Distanza percorsa nel giro corrente, in metri. */
+  distanceTravelled(): number {
+    return this.traveled;
+  }
+
+  /** Velocita' corrente, m/s. */
+  currentSpeed(): number {
+    return this.speed;
+  }
+
+  /** Quanti giri completi sono stati percorsi. */
+  laps(): number {
+    return this.lap;
+  }
+
+  /** Inietta manualmente un urto. */
   injectImpact(peak = 8, durationMs = 140): void {
     this.firing = { until: Date.now() + durationMs, peak };
   }
 
   // -- interni --------------------------------------------------------------
 
+  /**
+   * Avanza lungo il percorso di un passo temporale e produce un campione di
+   * movimento. `dt` e' in secondi.
+   */
+  private tick(dt: number): void {
+    const target = this.targetSpeed();
+    // Filtro passa-basso sulla velocita': i cambi risultano graduali anche
+    // quando il rallentamento in curva subentra di colpo.
+    // Il coefficiente deriva da una costante di TEMPO, non dal numero di
+    // campioni: cambiare `motionHz` non cambia come accelera il veicolo.
+    const alpha = 1 - Math.exp(-dt / DEMO.speedTimeConstantS);
+    this.speed = this.fixedSpeed ?? this.speed + (target - this.speed) * alpha;
+
+    const before = this.traveled;
+    const advanced = before + this.speed * dt;
+    if (advanced >= ROUTE_LENGTH_M) {
+      // Fine del percorso: si ricomincia e le anomalie tornano disponibili.
+      this.lap++;
+      this.fired.clear();
+    }
+    this.traveled = wrapDistance(advanced);
+
+    this.checkAnomalies(before, advanced);
+    this.emitMotion();
+  }
+
+  /** Velocita' desiderata alla posizione corrente. */
+  private targetSpeed(): number {
+    if (this.fixedSpeed !== null) return this.fixedSpeed;
+
+    const mid = (DEMO.minSpeedMps + DEMO.maxSpeedMps) / 2;
+    const amp = (DEMO.maxSpeedMps - DEMO.minSpeedMps) / 2;
+    // Oscillazione legata alla distanza percorsa, non al tempo: resta coerente
+    // qualunque sia la frequenza dei campioni.
+    const base = mid + amp * Math.sin((2 * Math.PI * this.traveled) / DEMO.speedPeriodM);
+
+    // Piu' la curva in arrivo e' stretta, piu' si rallenta.
+    const turn = turnAheadDeg(this.traveled, DEMO.turnLookaheadM);
+    const factor = 1 - DEMO.turnSlowdown * Math.min(1, turn / 90);
+
+    return clamp(base * factor, DEMO.minSpeedMps, DEMO.maxSpeedMps);
+  }
+
+  /** Fa scattare le anomalie quando il veicolo le attraversa. */
+  private checkAnomalies(before: number, after: number): void {
+    for (let i = 0; i < DEMO.anomalies.length; i++) {
+      if (this.fired.has(i)) continue;
+      const a = DEMO.anomalies[i];
+      if (!a) continue;
+      const at = a.at * ROUTE_LENGTH_M;
+      if (before <= at && after >= at) {
+        this.fired.add(i);
+        this.firing = { until: Date.now() + a.durationMs, peak: a.peak };
+      }
+    }
+  }
+
   private emitGeo(): void {
-    const p = this.position();
+    const p = positionAtDistance(this.traveled);
     const sample: GeoSample = {
       ts: Date.now(),
       lat: p.lat,
       lon: p.lon,
-      accuracyM: 8,
-      speedMps: this.speedMps,
+      accuracyM: DEMO.accuracyM,
+      speedMps: this.speed,
       heading: p.heading,
     };
     this.handlers.onGeo?.(sample);
@@ -143,24 +203,13 @@ export class DemoSensorProvider implements SensorProvider {
   private emitMotion(): void {
     const now = Date.now();
 
-    // Armamento delle anomalie: scatta quando si attraversa il punto previsto.
-    for (let i = 0; i < ANOMALIES.length; i++) {
-      const a = ANOMALIES[i] as ScriptedAnomaly;
-      const near = Math.abs(this.progress - a.at) < 0.004;
-      if (near && !this.armed.has(i)) {
-        this.armed.add(i);
-        this.firing = { until: now + a.durationMs, peak: a.peak };
-      } else if (!near && this.armed.has(i) && Math.abs(this.progress - a.at) > 0.02) {
-        this.armed.delete(i); // ri-armabile al giro successivo
-      }
-    }
-
-    // Rumore di fondo realistico dell'asfalto + eventuale impulso.
-    const noise = (Math.random() - 0.5) * 1.2;
-    let vertical = noise;
+    // Rumore di fondo dell'asfalto; sopra vi si sovrappone l'eventuale impulso.
+    let vertical = (Math.random() - 0.5) * DEMO.roadNoise;
     if (this.firing) {
       if (now < this.firing.until) {
-        vertical = this.firing.peak * (0.75 + Math.random() * 0.25) * (Math.random() < 0.5 ? -1 : 1);
+        // Oscillazione smorzata: la ruota scende e risale.
+        vertical =
+          this.firing.peak * (0.75 + Math.random() * 0.25) * (Math.random() < 0.5 ? -1 : 1);
       } else {
         this.firing = null;
       }
@@ -174,4 +223,8 @@ export class DemoSensorProvider implements SensorProvider {
     };
     this.handlers.onMotion?.(sample);
   }
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
 }

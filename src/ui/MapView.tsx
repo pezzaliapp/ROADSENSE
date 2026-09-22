@@ -67,6 +67,13 @@ interface Props {
    * Se assente si usa il fallback di `MAP`.
    */
   initialView?: { lat: number; lon: number; zoom: number } | null;
+  /**
+   * Tracciato da disegnare come linea sottile, in coppie [lat, lon].
+   * Usato SOLO dalla DEMO MODE per rendere visibile il percorso previsto.
+   * Per rimuovere la funzione basta smettere di passare questa prop: tutto il
+   * codice che la riguarda e' raccolto in un unico effetto piu' sotto.
+   */
+  routeOverlay?: readonly (readonly [number, number])[] | null;
   onMapMovedByUser?: () => void;
 }
 
@@ -102,6 +109,7 @@ export function MapView({
   heading,
   follow,
   initialView,
+  routeOverlay,
   onMapMovedByUser,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -264,11 +272,63 @@ export function MapView({
         map.jumpTo({ center: [position.lon, position.lat], zoom: MAP.followZoom });
         firstFixRef.current = true;
       } else {
-        // `jumpTo` e non `easeTo`: nessuna animazione, nessun fotogramma extra.
-        map.jumpTo({ center: [position.lon, position.lat] });
+        // Scorrimento continuo invece di uno scatto a ogni aggiornamento GPS.
+        // La durata copre l'intervallo tra due posizioni e l'andamento e'
+        // lineare: la mappa segue il veicolo senza accelerazioni percepibili
+        // e senza rimbalzi. Costa qualche fotogramma in piu' di `jumpTo`,
+        // ma uno scatto al secondo e' fastidioso proprio mentre si guida.
+        map.easeTo({
+          center: [position.lon, position.lat],
+          duration: MAP.followEaseMs,
+          easing: (t) => t,
+          essential: true,
+        });
       }
     }
   }, [position, heading, follow]);
+
+  // -- tracciato della demo (rimovibile: basta non passare `routeOverlay`) ---
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !routeOverlay || routeOverlay.length < 2) return;
+
+    const SOURCE = 'rs-demo-route';
+    const LAYER = 'rs-demo-route-line';
+
+    const add = () => {
+      if (map.getSource(SOURCE)) return;
+      map.addSource(SOURCE, {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            // GeoJSON vuole [lon, lat].
+            coordinates: routeOverlay.map(([lat, lon]) => [lon, lat]),
+          },
+        },
+      });
+      map.addLayer({
+        id: LAYER,
+        type: 'line',
+        source: SOURCE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        // Volutamente discreto: deve far capire il percorso previsto durante
+        // lo sviluppo, non competere con gli eventi.
+        paint: { 'line-color': '#3da5ff', 'line-width': 2, 'line-opacity': 0.35 },
+      });
+    };
+
+    if (map.isStyleLoaded()) add();
+    else map.once('load', add);
+
+    return () => {
+      if (!mapRef.current) return;
+      if (map.getLayer(LAYER)) map.removeLayer(LAYER);
+      if (map.getSource(SOURCE)) map.removeSource(SOURCE);
+    };
+  }, [routeOverlay]);
 
   return <div id="map" ref={containerRef} role="application" aria-label="Mappa ROAD SENSE" />;
 }

@@ -265,12 +265,23 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   padding: 6px 14px 0;
   background: var(--panel);
-  font-size: 12px;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  letter-spacing: 0.05em;
   color: var(--muted);
+  /* Tre informazioni brevi su una sola riga: se andassero a capo la barra
+     cambierebbe altezza mentre si guida, ed e' esattamente cio' che non deve
+     succedere. Il testo centrale cede spazio per primo. */
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.statusline > :nth-child(2) {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .statusline .dot { color: var(--muted); }

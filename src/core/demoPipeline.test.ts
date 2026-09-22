@@ -22,8 +22,7 @@ import { installMemoryStorage } from './testUtils';
 import type { GeoSample, RoadEvent } from './types';
 
 const storage = installMemoryStorage();
-const CENTER = { lat: 45.4642, lon: 9.19 };
-const RADIUS = 900;
+
 
 describe('catena completa in DEMO MODE', () => {
   beforeEach(() => {
@@ -36,7 +35,7 @@ describe('catena completa in DEMO MODE', () => {
   });
 
   it('rileva automaticamente le anomalie simulate lungo il percorso', async () => {
-    const provider = new DemoSensorProvider({ center: CENTER, radiusM: RADIUS, speedMps: 14 });
+    const provider = new DemoSensorProvider();
     const engine = new SensorEngine(provider);
     const detector = new DetectionEngine();
     const detections: Detection[] = [];
@@ -68,7 +67,7 @@ describe('catena completa in DEMO MODE', () => {
   });
 
   it('non genera rilevamenti a veicolo fermo', async () => {
-    const provider = new DemoSensorProvider({ center: CENTER, radiusM: RADIUS, speedMps: 0 });
+    const provider = new DemoSensorProvider({ fixedSpeedMps: 0 });
     const engine = new SensorEngine(provider);
     const detector = new DetectionEngine();
     let detected = 0;
@@ -88,7 +87,7 @@ describe('catena completa in DEMO MODE', () => {
     const demoStore = new EventStore(true);
     const realStore = new EventStore(false);
 
-    demoStore.add(buildDemoEvents(CENTER, RADIUS, Date.now()));
+    demoStore.add(buildDemoEvents(Date.now()));
     expect(demoStore.all().length).toBeGreaterThan(0);
     expect(realStore.all()).toHaveLength(0);
   });
@@ -96,9 +95,9 @@ describe('catena completa in DEMO MODE', () => {
   it('produce alert avvicinandosi a un evento demo davanti al veicolo', async () => {
     const now = Date.now();
     const store = new EventStore(true);
-    store.add(buildDemoEvents(CENTER, RADIUS, now), now);
+    store.add(buildDemoEvents(now), now);
 
-    const provider = new DemoSensorProvider({ center: CENTER, radiusM: RADIUS, speedMps: 14 });
+    const provider = new DemoSensorProvider();
     const engine = new SensorEngine(provider);
     const alertEngine = new AlertEngine();
     const alerts: string[] = [];
@@ -127,8 +126,8 @@ describe('catena completa in DEMO MODE', () => {
     const store = new EventStore(true);
     const event: RoadEvent = {
       id: newEventId(),
-      lat: CENTER.lat,
-      lon: CENTER.lon,
+      lat: 45.4642,
+      lon: 9.19,
       ts: now,
       type: 'pothole',
       severity: 2,

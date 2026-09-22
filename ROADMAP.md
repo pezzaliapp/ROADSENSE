@@ -26,7 +26,8 @@ Funzionante e verificata in locale.
 - [x] Segnalazione manuale in due tocchi
 - [x] Identificatore anonimo a rotazione
 - [x] Archivio locale con TTL e deduplicazione
-- [x] **DEMO MODE** utilizzabile da desktop
+- [x] **DEMO MODE** utilizzabile da desktop, su itinerario stradale reale
+      congelato nel progetto (offline, deterministico, senza servizi di routing)
 - [x] Stub dei provider futuri (BLE, OBD, SmartTyre, CyberTyre)
 - [x] Backend Cloudflare Worker + D1 **scritto** (non deployato, disattivo)
 - [x] Test su logica critica e percorsi degradati

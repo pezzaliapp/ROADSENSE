@@ -22,6 +22,8 @@ import { buildDemoEvents } from './core/demoSeed';
 import { distanceM, roundCoord } from './core/geo';
 import { PhoneSensorProvider } from './core/sensors/PhoneSensorProvider';
 import { DemoSensorProvider } from './core/sensors/DemoSensorProvider';
+import { DEMO_ROUTE } from './demo/demoRoute';
+import { DEMO_ROUTE_CENTER } from './demo/demoRoute';
 import type { EventCluster, EventType, GeoSample, RoadEvent, SystemStatus } from './core/types';
 import { backendEnabled, fetchNearby, postEvents } from './net/api';
 
@@ -31,9 +33,6 @@ import { ReportSheet } from './ui/ReportSheet';
 import { StatusBar } from './ui/StatusBar';
 import { usePwaUpdate } from './ui/usePwaUpdate';
 import { useWakeLock } from './ui/useWakeLock';
-
-const DEMO_CENTER = { lat: 45.4642, lon: 9.19 };
-const DEMO_RADIUS_M = 900;
 
 function isDemoRequested(): boolean {
   if (typeof window === 'undefined') return false;
@@ -89,7 +88,7 @@ export default function App() {
     storeRef.current = store;
 
     if (demo && store.all().length === 0) {
-      store.add(buildDemoEvents(DEMO_CENTER, DEMO_RADIUS_M));
+      store.add(buildDemoEvents());
     }
 
     const unsubscribe = store.subscribe(refreshClusters);
@@ -101,9 +100,7 @@ export default function App() {
 
   // -- provider: telefono o demo -------------------------------------------
   useEffect(() => {
-    const provider = demo
-      ? new DemoSensorProvider({ center: DEMO_CENTER, radiusM: DEMO_RADIUS_M })
-      : new PhoneSensorProvider();
+    const provider = demo ? new DemoSensorProvider() : new PhoneSensorProvider();
     const engine = new SensorEngine(provider);
     sensorRef.current = engine;
     void engine.probe();
@@ -334,7 +331,10 @@ export default function App() {
           position={position}
           heading={heading}
           follow={follow && running}
-          initialView={demo ? { ...DEMO_CENTER, zoom: 13 } : null}
+          initialView={demo ? { ...DEMO_ROUTE_CENTER, zoom: 14.5 } : null}
+          // Tracciato della demo: linea sottile, visibile SOLO in ?demo=1.
+          // Per rimuoverla basta non passare questa prop.
+          routeOverlay={demo ? DEMO_ROUTE : null}
           onMapMovedByUser={() => setFollow(false)}
         />
         <AlertBanner alert={alert} onDismiss={() => setAlert(null)} />
