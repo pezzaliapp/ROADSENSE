@@ -15,7 +15,7 @@ ROAD SENSE non ha account, non ha sessioni e non conserva dati personali:
 | Payload malformati o giganti | limite 4 KB, massimo 20 eventi per richiesta, ogni campo validato e ritipizzato |
 | XSS | nessun input testuale libero **esiste** nell'app; CSP che consente script solo dal proprio dominio |
 | SQL injection | esclusivamente query parametrizzate (`prepare().bind()`) |
-| Esfiltrazione di dati verso terzi | CSP che blocca ogni connessione esterna tranne le tile OSM |
+| Esfiltrazione di dati verso terzi | CSP che blocca ogni connessione esterna tranne il dominio della cartografia |
 | Segreti esposti | il frontend **non ha** segreti; i segreti del Worker stanno in `wrangler secret` |
 | Costi imprevisti | nessun servizio a consumo, nessun binding a pagamento, nessuna carta di credito |
 | Abuso del rate limiting per tracciare | la chiave è un hash salato e giornaliero, mai un IP |
@@ -45,9 +45,9 @@ frame-ancestors 'none';
 form-action 'none';
 script-src 'self';
 style-src 'self' 'unsafe-inline';
-img-src 'self' data: blob: https://*.tile.openstreetmap.org;
-connect-src 'self' https://*.tile.openstreetmap.org;
-worker-src 'self';
+img-src 'self' data: blob: https://tiles.openfreemap.org;
+connect-src 'self' https://tiles.openfreemap.org;
+worker-src 'self' blob:;
 manifest-src 'self';
 upgrade-insecure-requests
 ```
@@ -56,16 +56,24 @@ Conseguenze volute:
 
 - **nessuno script di terze parti** può essere caricato: niente analytics,
   niente tracker, niente CDN esterne;
-- **nessuna connessione** verso domini diversi dal proprio e dalle tile OSM;
+- **nessuna connessione** verso domini diversi dal proprio e da quello della
+  cartografia;
 - la pagina non può essere incorniciata (`frame-ancestors 'none'`);
 - non esistono form da dirottare (`form-action 'none'`).
 
-### L'unica concessione: `style-src 'unsafe-inline'`
+### Le due concessioni
 
-È richiesta da Leaflet, che posiziona i tile tramite attributi `style` inline.
-Il rischio residuo è basso — `script-src` resta rigido e non esiste alcun punto
-in cui contenuto non fidato entri nel DOM — ma **è una concessione reale** ed è
-documentata qui invece di essere nascosta.
+`style-src 'unsafe-inline'` è richiesta da MapLibre, che posiziona i marker e i
+controlli tramite attributi `style` inline.
+
+`worker-src blob:` è richiesta perché MapLibre crea il proprio worker di
+rendering da una blob URL.
+
+Il rischio residuo è basso — `script-src` resta rigido, `default-src` è `'self'`
+e non esiste alcun punto in cui contenuto non fidato entri nel DOM: ROAD SENSE
+non ha campi di testo liberi, e i marker vengono popolati con `textContent`, mai
+con `innerHTML`. Restano però **concessioni reali**, documentate qui invece che
+nascoste.
 
 ### Se il backend viene servito su un dominio diverso
 
@@ -80,7 +88,7 @@ alternativa occorre aggiungere esplicitamente l'origine del Worker alla CSP.
 | Header | Valore | Funzione |
 |---|---|---|
 | `X-Content-Type-Options` | `nosniff` | niente interpretazione creativa dei tipi MIME |
-| `Referrer-Policy` | `no-referrer` | nessuna informazione di provenienza verso l'esterno |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | verso l'esterno viene inviata **solo l'origine**, mai il percorso. `no-referrer` è stato abbandonato perché impediva di identificare l'applicazione e viola la Tile Usage Policy di OpenStreetMap |
 | `X-Frame-Options` | `DENY` | anti-clickjacking (compatibilità) |
 | `Cross-Origin-Opener-Policy` | `same-origin` | isolamento del contesto di navigazione |
 | `Permissions-Policy` | `geolocation=(self), accelerometer=(self), gyroscope=(self), camera=(), microphone=(), payment=(), usb=()` | **nega esplicitamente** ciò che ROAD SENSE non usa |
@@ -225,7 +233,7 @@ grep -rInE "(api[_-]?key|secret|password|token|bearer|BEGIN .*PRIVATE KEY)" \
 
 ## Dipendenze
 
-Tre dipendenze di produzione: `react`, `react-dom`, `leaflet`.
+Tre dipendenze di produzione: `react`, `react-dom`, `maplibre-gl`.
 
 Meno dipendenze significa meno superficie di attacco e meno aggiornamenti di
 sicurezza da inseguire. Il service worker, le icone e la validazione sono

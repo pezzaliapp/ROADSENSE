@@ -52,13 +52,13 @@ monte, e l'assenza del backend non interrompe nulla.
 | Scelta | Alternativa scartata | Motivo |
 |---|---|---|
 | React 19 + TypeScript + Vite | — | richiesto, gratuito, build veloce |
-| **Leaflet puro** | `react-leaflet` | una dipendenza in meno e controllo esplicito sul ciclo di vita dei layer, che è ciò che conta per il consumo |
+| **MapLibre GL** | Leaflet | Leaflet è più leggero, ma le uniche sorgenti cartografiche oggi davvero libere e senza chiave sono **vettoriali**. Costo reale: +240 kB gzip e WebGL richiesto |
 | **CSS unico scritto a mano** | Tailwind / MUI | l'interfaccia ha 6 componenti: un framework CSS sarebbe più pesante del progetto |
 | **Service worker scritto a mano** | Workbox / `vite-plugin-pwa` | servono tre strategie di cache, non un generatore. Zero dipendenze di build |
 | **Icone generate da script Node** | pacchetto grafico | nessuna dipendenza, icone riproducibili con `npm run icons` |
-| **Nessun clustering marker** | `leaflet.markercluster` | il `ConfidenceEngine` già aggrega per zona: un secondo livello di raggruppamento confonderebbe soltanto |
+| **Nessun clustering marker** | librerie di clustering | il `ConfidenceEngine` già aggrega per zona: un secondo livello di raggruppamento confonderebbe soltanto |
 
-Dipendenze di produzione totali: **3** (`react`, `react-dom`, `leaflet`).
+Dipendenze di produzione totali: **3** (`react`, `react-dom`, `maplibre-gl`).
 
 ---
 
@@ -384,7 +384,7 @@ presente in `wrangler.toml`.
 |---|---|---|
 | HTML di navigazione | rete per prima, cache di riserva | l'app deve restare aggiornata, ma aprirsi anche offline |
 | `/assets/*` | cache per prima | nomi con hash: non cambiano mai a parità di nome |
-| tile OSM | cache per prima, max 400, TTL 7 giorni | solo le tile **viste**, mai prefetch |
+| cartografia | **mai in cache** | il service worker non intercetta nulla fuori dalla propria origine. Un archivio cartografico offline è un uso che ROAD SENSE non fa e che vari fornitori vietano |
 | `/api/*` | **mai in cache** | un evento stradale vecchio è peggio di nessun evento |
 
 L'aggiornamento non viene mai applicato a sorpresa: compare una barra e decide
@@ -408,5 +408,12 @@ integrazione avverrebbe come un ulteriore `SensorProvider` opzionale il cui
 fallimento degrada a "nessun dato meteo", esattamente come oggi degrada
 l'assenza dell'accelerometro.
 
-**Tile provider.** `TILE_PROVIDER` in `config/config.ts` è un singolo oggetto:
-cambiare cartografia significa cambiare tre righe.
+**Sorgente cartografica.** `MapTileProvider` in `config/mapProviders.ts`
+astrae il fornitore e copre sia le sorgenti **vettoriali** sia quelle
+**raster**: `MapView` costruisce lo stile nell'uno o nell'altro modo e non
+va mai toccato per cambiare fornitore.
+
+Questa astrazione non è teorica: è nata da un blocco reale. La v0.1.0 usava
+`tile.openstreetmap.org` e riceveva `x-blocked` dai server della OpenStreetMap
+Foundation, la cui Tile Usage Policy non consente l'uso da parte di
+applicazioni distribuite. Vedi la nota storica in fondo a `mapProviders.ts`.

@@ -115,29 +115,39 @@ button {
   background: #0b0e11;
 }
 
-/* Tile scurite: la cartografia OSM e' chiara, in auto di notte acceca.
-   Filtro puramente visivo, i dati restano quelli di OpenStreetMap. */
-.leaflet-tile-pane {
-  filter: invert(1) hue-rotate(185deg) brightness(0.92) contrast(0.92) saturate(0.65);
-}
+/* La cartografia attiva e' gia' scura di suo (OpenFreeMap Dark): nessun
+   filtro CSS di inversione, che con una mappa chiara rendeva le etichette
+   innaturali e costava un passaggio di composizione in piu' a ogni fotogramma. */
 
-.leaflet-container {
+.maplibregl-map {
   background: #0b0e11;
   font-family: inherit;
 }
 
-.leaflet-control-attribution {
+.maplibregl-canvas:focus { outline: none; }
+
+/* Attribuzione: obbligatoria, quindi leggibile e mai nascosta. */
+.maplibregl-ctrl-attrib {
   background: rgba(11, 14, 17, 0.82) !important;
   color: var(--muted) !important;
   font-size: 10px !important;
 }
 
-.leaflet-control-attribution a { color: #9fb3c8 !important; }
+.maplibregl-ctrl-attrib a { color: #9fb3c8 !important; }
 
-.leaflet-bar a {
+.maplibregl-ctrl-attrib-button {
+  background-color: rgba(11, 14, 17, 0.82) !important;
+}
+
+.maplibregl-ctrl-group {
   background: var(--panel) !important;
-  color: var(--text) !important;
-  border-color: var(--line) !important;
+  border: 1px solid var(--line) !important;
+}
+
+.maplibregl-ctrl-group button + button { border-top: 1px solid var(--line) !important; }
+
+.maplibregl-ctrl-group button span {
+  filter: invert(1);
 }
 
 /* marker eventi */
@@ -146,7 +156,6 @@ button {
   place-items: center;
   width: 30px;
   height: 30px;
-  margin: -15px 0 0 -15px;
   border-radius: 50%;
   background: var(--panel);
   border: 2px solid currentColor;
@@ -159,11 +168,19 @@ button {
 .rs-marker.probable { opacity: 0.85; }
 .rs-marker.confirmed { opacity: 1; box-shadow: 0 0 0 3px rgba(255, 176, 32, 0.18); }
 
-/* posizione utente */
+/* posizione utente: MapLibre centra l'elemento sul punto, quindi la freccia
+   di direzione ruota attorno al centro del contenitore. */
+.rs-me-wrap {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+}
+
 .rs-me {
   width: 22px;
   height: 22px;
-  margin: -11px 0 0 -11px;
   border-radius: 50%;
   background: #3da5ff;
   border: 3px solid #0b0e11;
@@ -171,13 +188,22 @@ button {
 }
 
 .rs-me-arrow {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+}
+
+.rs-me-arrow::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -14px;
   width: 0;
   height: 0;
-  margin: -20px 0 0 -8px;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 14px solid #3da5ff;
-  transform-origin: 50% 70%;
+  margin-left: -7px;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 12px solid #3da5ff;
 }
 
 /* ---------- alert ---------- */

@@ -209,17 +209,33 @@ l'accelerometro scollegato. A monitoraggio fermo ROAD SENSE non osserva nulla.
 
 ## Cartografia
 
-Le tile provengono da OpenStreetMap. Come ogni caricamento di immagine da un
-dominio esterno, il server delle tile riceve la richiesta con l'IP del
-dispositivo — è inevitabile per qualsiasi mappa online. ROAD SENSE:
+La cartografia proviene da [OpenFreeMap](https://openfreemap.org/), con dati
+OpenStreetMap. Come per qualsiasi mappa online, il server della cartografia
+riceve la richiesta con l'IP del dispositivo: è inevitabile.
+
+ROAD SENSE:
 
 - non aggiunge alcun identificatore alle richieste;
-- imposta `referrer: no-referrer`;
-- non effettua prefetch (si scarica solo ciò che è visibile);
-- limita la cache a 400 tile con scadenza a 7 giorni.
+- non invia cookie (OpenFreeMap dichiara di non usarne e non richiede
+  registrazione né chiave API);
+- non effettua prefetch: si scarica solo ciò che è visibile;
+- non memorizza cartografia nel service worker.
 
-Si applica la [privacy policy della OpenStreetMap
-Foundation](https://wiki.osmfoundation.org/wiki/Privacy_Policy).
+### Una correzione rispetto alla v0.1.0
+
+La v0.1.0 impostava `Referrer-Policy: no-referrer`. Ora è
+`strict-origin-when-cross-origin`, quindi **il server della cartografia riceve
+l'origine di ROAD SENSE** (es. `https://roadsense.pezzalihub.app/`), mai il
+percorso o parametri.
+
+Il motivo è dichiarato: i fornitori di cartografia hanno bisogno di sapere
+quale applicazione li sta chiamando, e la Tile Usage Policy di OpenStreetMap
+vieta esplicitamente una Referrer-Policy che impedisca l'invio del Referer.
+
+È un'informazione in più rispetto a prima, ed è giusto dirlo. Non riguarda
+comunque l'utente: identifica **l'applicazione**, non chi la usa. Verso
+qualsiasi altra destinazione non viene inviato nulla, perché ROAD SENSE non
+contatta nessun altro dominio.
 
 ---
 

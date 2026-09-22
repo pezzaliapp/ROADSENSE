@@ -13,7 +13,8 @@ Alessandro Pezzali
 Funzionante e verificata in locale.
 
 - [x] PWA installabile, mobile-first, dark mode, offline shell
-- [x] Mappa Leaflet + OpenStreetMap con attribution corretta
+- [x] Mappa MapLibre + OpenFreeMap (dati OpenStreetMap) con attribution corretta
+- [x] Sorgente cartografica astratta dietro `MapTileProvider` (vettoriale o raster)
 - [x] Posizione e direzione dell'utente
 - [x] `SensorProvider` astratto + `PhoneSensorProvider`
 - [x] `SensorEngine`: normalizzazione, rumore di fondo, frequenza controllata
@@ -33,7 +34,14 @@ Funzionante e verificata in locale.
 
 ---
 
-## v0.1.1 — Pubblicazione
+## v0.1.1 — Cartografia conforme e pubblicazione
+
+- [x] Sostituita la sorgente cartografica: i server di OpenStreetMap bloccavano
+      ROAD SENSE (`x-blocked`), correttamente, perché la loro Tile Usage Policy
+      non consente l'uso da parte di applicazioni distribuite
+- [x] `Referrer-Policy` corretta, cache cartografica rimossa dal service worker
+- [ ] Valutare una sorgente **raster** se il peso di MapLibre (+240 kB gzip) o
+      il requisito WebGL dovessero risultare un problema su dispositivi datati
 
 Obiettivo: ROAD SENSE raggiungibile su HTTPS e provabile su strada.
 
@@ -119,7 +127,7 @@ intense, grandine, temporali.
 | Notifiche push | richiedono registrazione e un servizio: incompatibili con "nessun account" |
 | Navigazione turn-by-turn | serve routing: nessuna soluzione gratuita e sostenibile. Esistono già app che lo fanno bene |
 | Machine learning in cloud | costo, privacy, complessità. L'euristica locale è leggibile, modificabile e verificabile |
-| Download di mappe offline | violerebbe la tile usage policy di OpenStreetMap |
+| Download di mappe offline | è un uso che vari fornitori vietano espressamente, OpenStreetMap incluso |
 | Classifiche, punteggi, gamification | incentiverebbero a guardare il telefono guidando |
 | Foto delle buche | privacy (volti, targhe), banda, moderazione, archiviazione |
 | Descrizioni testuali libere | richiederebbero moderazione e aprirebbero superfici di attacco. Le categorie bastano |

@@ -1,30 +1,36 @@
 /* ROAD SENSE - service worker.
  *
  * Scritto a mano: nessuna libreria, nessun build step aggiuntivo, nessuna
- * dipendenza. Fa tre cose e basta.
+ * dipendenza. Fa due cose e basta.
  *
  * 1) OFFLINE SHELL
  *    L'HTML di partenza viene servito dalla cache quando la rete manca, cosi'
- *    ROAD SENSE si apre comunque (mappa senza tile, eventi locali visibili,
- *    segnalazione manuale funzionante).
+ *    ROAD SENSE si apre comunque: eventi locali visibili e segnalazione
+ *    manuale funzionante.
  *
  * 2) ASSET CON HASH
  *    I file sotto /assets/ hanno nomi univoci per build: cache-first puro.
  *
- * 3) TILE OPENSTREETMAP - CACHE LIMITATA E RISPETTOSA
- *    Si memorizzano SOLO le tile effettivamente visualizzate, mai in anticipo.
- *    Il numero e' limitato (MAX_TILES) e le tile scadono dopo TILE_TTL_MS.
- *    Nessun download massivo, nessun prefetch: sarebbe una violazione della
- *    tile usage policy di OpenStreetMap oltre che uno spreco di banda.
+ * COSA NON FA, DELIBERATAMENTE: NON MEMORIZZA CARTOGRAFIA.
+ * Nessuna tile, nessuno stile, nessun glifo, nessuno sprite viene messo in
+ * cache. Ogni richiesta verso un'origine diversa dalla propria viene lasciata
+ * passare alla rete senza essere intercettata.
+ *
+ * Perche': memorizzare tile equivale a costruirsi un archivio cartografico
+ * offline. La Tile Usage Policy di OpenStreetMap lo vieta espressamente
+ * ("Offline use is not permitted"), e anche presso fornitori che lo
+ * consentirebbero resta un uso che ROAD SENSE non ha motivo di fare: la mappa
+ * serve durante la guida, con la rete attiva. Il browser applica comunque la
+ * propria cache HTTP secondo gli header del fornitore, che e' il
+ * comportamento corretto e sufficiente.
+ *
+ * Conseguenza accettata: offline la mappa resta senza sfondo cartografico.
+ * E' documentato nel README, non nascosto.
  */
 
-const VERSION = 'v0.1.0';
+const VERSION = 'v0.1.1';
 const SHELL_CACHE = `roadsense-shell-${VERSION}`;
 const ASSET_CACHE = `roadsense-assets-${VERSION}`;
-const TILE_CACHE = 'roadsense-tiles-v1';
-
-const MAX_TILES = 400;
-const TILE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png'];
 
@@ -42,9 +48,12 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
+      // Questo cancella anche `roadsense-tiles-v1`, la cache cartografica
+      // creata dalla v0.1.0: i dispositivi che l'hanno gia' se la vedono
+      // rimuovere al primo aggiornamento.
       await Promise.all(
         keys
-          .filter((k) => k.startsWith('roadsense-') && k !== SHELL_CACHE && k !== ASSET_CACHE && k !== TILE_CACHE)
+          .filter((k) => k.startsWith('roadsense-') && k !== SHELL_CACHE && k !== ASSET_CACHE)
           .map((k) => caches.delete(k)),
       );
       await self.clients.claim();
@@ -63,16 +72,13 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
+  // TUTTO cio' che non e' della nostra origine - cartografia inclusa - non
+  // viene nemmeno intercettato: va in rete e non entra in alcuna cache.
+  if (url.origin !== self.location.origin) return;
+
   // Le API non vengono mai cacheate: un evento stradale vecchio e' peggio di
   // nessun evento.
-  if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) return;
-
-  if (isTile(url)) {
-    event.respondWith(tileStrategy(request));
-    return;
-  }
-
-  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(navigationStrategy(request));
@@ -86,10 +92,6 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(cacheFirst(request, SHELL_CACHE));
 });
-
-function isTile(url) {
-  return url.hostname.endsWith('.tile.openstreetmap.org') || url.hostname === 'tile.openstreetmap.org';
-}
 
 /** Rete per prima, cache come rete di sicurezza: l'HTML deve restare fresco. */
 async function navigationStrategy(request) {
@@ -122,42 +124,5 @@ async function cacheFirst(request, cacheName) {
     return response;
   } catch {
     return new Response('', { status: 504 });
-  }
-}
-
-/**
- * Tile: cache-first con scadenza e tetto massimo.
- * La data di memorizzazione viene letta dall'header `date` della risposta.
- */
-async function tileStrategy(request) {
-  const cache = await caches.open(TILE_CACHE);
-  const cached = await cache.match(request);
-
-  if (cached) {
-    const dateHeader = cached.headers.get('date');
-    const age = dateHeader ? Date.now() - Date.parse(dateHeader) : 0;
-    if (!Number.isFinite(age) || age < TILE_TTL_MS) return cached;
-  }
-
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      await cache.put(request, response.clone());
-      void trimTiles(cache);
-    }
-    return response;
-  } catch {
-    // Offline: meglio una tile vecchia che una mappa vuota.
-    return cached || new Response('', { status: 504 });
-  }
-}
-
-/** Mantiene la cache tile sotto MAX_TILES eliminando le voci piu' vecchie. */
-async function trimTiles(cache) {
-  const keys = await cache.keys();
-  if (keys.length <= MAX_TILES) return;
-  const excess = keys.length - MAX_TILES;
-  for (let i = 0; i < excess; i++) {
-    await cache.delete(keys[i]);
   }
 }

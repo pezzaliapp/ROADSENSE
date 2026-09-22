@@ -181,27 +181,22 @@ export const ALERT = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// MAPPA / TILE PROVIDER (sostituibile)
+// MAPPA
 // ---------------------------------------------------------------------------
 export const MAP = {
   /** Centro di fallback quando non c'e' posizione: Italia. */
   fallbackCenter: [41.9, 12.5] as [number, number],
-  fallbackZoom: 6,
-  followZoom: 17,
-  minZoom: 4,
+  fallbackZoom: 5.5,
+  followZoom: 16.5,
+  minZoom: 3,
   maxZoom: 19,
 } as const;
 
-/**
- * Tile provider. Astratto per poter essere sostituito senza toccare la UI.
- * OpenStreetMap standard: uso moderato, nessun prefetch, attribution obbligatoria.
- */
-export const TILE_PROVIDER = {
-  id: 'osm',
-  url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  maxZoom: 19,
-} as const;
+// La sorgente cartografica e' definita in `config/mapProviders.ts`:
+// e' astratta dietro `MapTileProvider` perche' cambiare fornitore non debba
+// mai richiedere modifiche a MapView.
+export { ACTIVE_MAP_PROVIDER, MAP_PROVIDERS } from './mapProviders';
+export type { MapTileProvider } from './mapProviders';
 
 // ---------------------------------------------------------------------------
 // PRIVACY / IDENTIFICATORI

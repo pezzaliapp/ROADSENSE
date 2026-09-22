@@ -187,6 +187,59 @@ Dettagli completi: [PRIVACY.md](PRIVACY.md).
 
 ---
 
+## Cartografia
+
+ROAD SENSE usa **[OpenFreeMap](https://openfreemap.org/)** (stile *Dark*), tile
+vettoriali derivate da dati OpenStreetMap, renderizzate con MapLibre GL.
+
+Verificato il 22/09/2026: gratuito, **nessuna chiave API, nessuna
+registrazione, nessun cookie, nessuna carta di credito**, nessun limite
+dichiarato di richieste; codice del progetto sotto licenza MIT; esplicitamente
+destinato a siti e applicazioni. L'attribuzione è obbligatoria ed è sempre
+visibile in mappa.
+
+### Perché non i server di OpenStreetMap
+
+La v0.1.0 usava `tile.openstreetmap.org` e veniva **bloccata**:
+
+```
+x-blocked: Access denied. See https://operations.osmfoundation.org/policies/tiles/
+```
+
+Il blocco era corretto. Quei server sono gestiti da volontari e la loro
+[Tile Usage Policy](https://operations.osmfoundation.org/policies/tiles/)
+consente *"normal interactive viewing by a human"*, non l'uso da parte di
+applicazioni distribuite. ROAD SENSE ne violava tre punti:
+
+1. `Referrer-Policy: no-referrer` — la policy vieta esplicitamente di *"set a
+   restrictive Referrer-Policy that prevents the HTTP Referer header being
+   sent"*;
+2. il service worker **memorizzava le tile** — la policy afferma che *"offline
+   use is not permitted"*;
+3. la policy richiede uno **User-Agent che identifichi l'applicazione**: una
+   PWA non può impostarlo, quindi non può conformarsi.
+
+La soluzione non è aggirare il blocco, ma usare una sorgente che consenta
+questo tipo di applicazione. **I dati restano OpenStreetMap e l'attribuzione
+resta obbligatoria.**
+
+### Cambiare fornitore
+
+La cartografia è astratta dietro `MapTileProvider` in
+[`src/config/mapProviders.ts`](src/config/mapProviders.ts). L'astrazione copre
+sia le sorgenti **vettoriali** sia quelle **raster**: cambiare fornitore — o
+passare da vettoriale a raster — non richiede alcuna modifica a `MapView`.
+
+```bash
+VITE_MAP_PROVIDER=openfreemap-positron   # variante chiara
+```
+
+Se si aggiunge un fornitore con domini diversi, vanno aggiornati anche i
+`hosts` del provider e la Content-Security-Policy in `public/_headers` e
+`index.html`. Un test lo verifica.
+
+---
+
 ## Limiti tecnici (dichiarati, non aggirati)
 
 Una PWA non può fare tutto ciò che fa un'app nativa. Questi limiti sono reali:
@@ -200,6 +253,8 @@ Una PWA non può fare tutto ciò che fa un'app nativa. Questi limiti sono reali:
 | **Nessun grafo stradale** | un alert può riferirsi a una strada parallela vicina | non esiste routing gratuito e offline. Il filtro per cono frontale e direzione riduce il problema ma non lo elimina |
 | **Niente notifiche push** | gli alert si vedono solo con l'app aperta | le push richiederebbero un servizio e una registrazione: incompatibili con "nessun account" |
 | **HTTPS obbligatorio** | da `http://` non funzionano né GPS né sensori | requisito dei browser |
+| **Mappa non disponibile offline** | senza rete l'app si apre ma senza sfondo cartografico | il service worker non memorizza cartografia, per scelta |
+| **La mappa richiede WebGL** | su dispositivi molto datati potrebbe non funzionare | le tile vettoriali sono renderizzate da MapLibre GL |
 | **Precisione GPS** | segnalazioni con precisione peggiore di 60 m vengono rifiutate | una segnalazione imprecisa è peggio di nessuna segnalazione |
 
 ---
@@ -219,7 +274,7 @@ Uso automobilistico prolungato significa ore. Scelte esplicite:
 - **Marker aggiornati per differenza**, non ricreati a ogni ciclo.
 - **Nessun polling di rete** — sincronizzazione al massimo ogni 90 secondi, e
   solo se ci si è spostati di oltre 2 km.
-- **Nessun prefetch di tile** — Leaflet scarica solo ciò che è visibile.
+- **Nessun prefetch di tile** — si scarica solo ciò che è visibile.
 - **Purge degli eventi scaduti una volta al minuto**, non a ogni frame.
 
 ---
@@ -229,14 +284,16 @@ Uso automobilistico prolungato significa ore. Scelte esplicite:
 - installabile su Android/Chrome e iOS/Safari (Aggiungi a schermata Home);
 - schermo intero, orientamento verticale, tema scuro;
 - **offline shell**: aperta almeno una volta, si riapre anche senza rete, con
-  eventi locali e segnalazione manuale funzionanti (la mappa resta senza tile
-  nuove);
+  eventi locali e segnalazione manuale funzionanti (**la mappa resta senza
+  sfondo cartografico**: vedi sotto);
 - **aggiornamenti mai forzati**: quando una nuova versione è pronta compare una
   barra e decide l'utente. Ricaricare l'app mentre qualcuno guida sarebbe
   inaccettabile;
-- **cache tile limitata e rispettosa**: solo le tile effettivamente
-  visualizzate, massimo 400, scadenza 7 giorni. Nessun download massivo:
-  sarebbe una violazione della tile usage policy di OpenStreetMap.
+- **il service worker non memorizza cartografia**: nessuna tile, nessuno
+  stile, nessun glifo. Ogni richiesta verso un'origine diversa dalla propria
+  non viene nemmeno intercettata. Costruirsi un archivio cartografico offline
+  è un uso che ROAD SENSE non ha motivo di fare, e che diversi fornitori
+  vietano espressamente.
 
 ---
 
@@ -313,6 +370,7 @@ Coprono la logica critica e i percorsi degradati:
 - `validation.test.ts` — validazione e sanitizzazione degli eventi
 - `EventStore.test.ts` — TTL, deduplicazione, persistenza, storage non disponibile
 - `anonId.test.ts` — formato, rotazione, unicità
+- `mapProviders.test.ts` — attribuzione obbligatoria, HTTPS, coerenza con la CSP, service worker che non memorizza cartografia
 - `degradation.test.ts` — sensori mancanti, compensazione orientamento, backend assente, stub
 - `demoPipeline.test.ts` — catena completa in DEMO MODE a tempo simulato
 
