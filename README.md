@@ -282,6 +282,119 @@ Dettagli completi: [PRIVACY.md](PRIVACY.md).
 
 ---
 
+## ROAD SENSE ZERO TOUCH
+
+L'obiettivo: **premere START prima di partire e non toccare più il telefono.**
+
+```
+SENSORI        rilevano ciò che possono misurare
+VOCE           segnala ciò che il conducente osserva
+NETWORK        confronta e conferma
+ROAD WEATHER   anticipa i rischi meteorologici
+ALERT          avvisa prima di raggiungere il pericolo
+```
+
+Il pulsante **SEGNALA** resta, ma come funzione secondaria: auto ferma o
+passeggero. Durante la guida non serve.
+
+### Segnalazione vocale
+
+Si parla, e basta:
+
+```
+"ROAD SENSE, auto in avaria ferma in seconda corsia"
+"ROAD SENSE, camion contromano"
+"ROAD SENSE, persona sulla carreggiata"
+```
+
+Posizione, direzione, velocità e istante li mettono i sensori. Compare una
+conferma **non interattiva** che sparisce da sola — nessun pulsante da premere.
+
+Il parser registra **solo ciò che viene detto**. `"auto ferma"` non diventa mai
+un'avaria, né un incidente, né acquisisce una corsia: dedurre attributi mai
+pronunciati significherebbe produrre avvisi falsi a chi guida.
+
+### Quattro cose diverse, tenute separate
+
+Confonderle è il modo più rapido per produrre avvisi sbagliati:
+
+| | significato | origine |
+|---|---|---|
+| **Affidabilità della sorgente** | quanto pesa chi lo dice | un *ordinamento* (manuale › voce › sensore), dichiarato arbitrario |
+| **Confidenza dell'evento** | quanto è probabile che sia vero | `ConfidenceEngine`, **invariato** |
+| **Stato di conferma** | quanti dispositivi **distinti** lo dicono | un conteggio: `REPORTED` → `CORROBORATED` |
+| **Priorità del pericolo** | quanto è grave *se* è vero | proprietà della categoria |
+
+Una prima versione usava un solo coefficiente al posto di tutti e quattro, e il
+suo valore era stato scelto perché i conti tornassero attorno a una soglia.
+**È stato rimosso**: un numero tarato su una soglia non è un modello.
+
+**Una voce sola è `REPORTED`, mai confermata.** Due segnalazioni da dispositivi
+**distinti** la rendono `CORROBORATED` — e due segnalazioni dallo stesso
+dispositivo non contano, perché lo stesso telefono che ripassa non è una
+seconda testimonianza.
+
+Un avviso scatta per **una** di tre ragioni indipendenti: la confidenza supera
+la soglia storica, oppure la zona è corroborata, oppure **il pericolo è critico
+ed è stato segnalato**. In quest'ultimo caso l'avviso lo dichiara:
+
+```
+Segnalato: camion contromano tra 1,4 km
+SEGNALAZIONE NON ANCORA CONFERMATA
+```
+
+Aspettare una seconda conferma prima di nominare un camion contromano sarebbe
+indifendibile. **Gravità e affidabilità sono cose diverse**, e ROAD SENSE le
+pronuncia come tali.
+
+### ZERO TOUCH: cosa funziona davvero, oggi
+
+| Condizione | Sensori | Voce | Avvisi parlati |
+|---|---|---|---|
+| App aperta, schermo acceso | ✅ | ✅ dove supportata | ✅ |
+| App aperta, schermo bloccato | ❌ | ❌ | ❌ |
+| App in secondo piano | ❌ | ❌ | ❌ |
+| PWA installata, in background | ❌ | ❌ | ❌ |
+| Android / Chrome | ✅ | ✅ riavvio automatico dopo ogni pausa | ✅ |
+| iOS / Safari e PWA | ✅ ma serve un tocco per i sensori di movimento | ⚠️ si chiude quasi sempre dopo una frase | ✅ dopo il primo gesto utente |
+
+> **ZERO TOUCH oggi significa «senza toccare il telefono», non «con il telefono
+> in tasca».** ROAD SENSE deve restare aperto e in primo piano, con lo schermo
+> acceso. È un limite dei browser, non una scelta: nessuna PWA può leggere
+> accelerometro o microfono a schermo spento. L'app lo dichiara nella schermata
+> iniziale e richiede uno Screen Wake Lock dove disponibile.
+
+### Limiti reali della voce, dichiarati
+
+| Limite | Conseguenza |
+|---|---|
+| **L'audio può lasciare il dispositivo** | Il riconoscimento dei browser è per impostazione predefinita un **servizio remoto**. ROAD SENSE chiede l'elaborazione locale dove il browser la offre (`processLocally`). Se non c'è, **il microfono non si accende** finché non arriva un consenso esplicito in due tocchi (vedi PRIVACY.md per il testo esatto) |
+| **Niente microfono in background** | Nessun browser ascolta a schermo spento o con l'app in secondo piano. ZERO TOUCH significa «senza toccare il telefono», non «con il telefono in tasca» |
+| **L'ascolto continuo si interrompe** | `continuous` non è garantito: su Android si chiude dopo il silenzio, su iOS quasi sempre dopo una frase. ROAD SENSE riavvia automaticamente, ed è il massimo ottenibile in una PWA |
+| **Firefox non supporta il riconoscimento** | Indicatore `VOCE --`, tutto il resto funziona |
+| **Serve rete** | Con riconoscimento remoto, offline la voce non funziona |
+
+La **sintesi** vocale (gli avvisi parlati) è invece locale nei browser moderni
+e non invia nulla. **È indipendente dal riconoscimento**: ROAD SENSE parla
+anche con la voce in ingresso disattivata o non supportata.
+
+> **Le trascrizioni non lasciano mai il dispositivo.** Il campo `rawTranscript`
+> viene scartato dalla validazione: l'oggetto inviato al backend è ricostruito
+> dai soli campi previsti, e la trascrizione non è fra questi. Un test lo
+> verifica.
+
+### Stato onesto di ROAD SENSE
+
+- **non esiste ancora una rete reale** di veicoli ROAD SENSE;
+- il multi-veicolo della demo è **simulato**, e lo dichiara;
+- **NOWCAST reale non è collegato**;
+- ROAD SENSE è **sperimentale, pre-beta**;
+- **non è un sistema di sicurezza certificato**;
+- il conducente **non deve interagire manualmente con lo smartphone durante
+  la guida**.
+
+---
+
 ## Cartografia
 
 ROAD SENSE usa **[OpenFreeMap](https://openfreemap.org/)** (stile *Dark*), tile
@@ -471,6 +584,9 @@ Coprono la logica critica e i percorsi degradati:
 - `weather.test.ts` — meteo assente fuori dalla demo, nessuna richiesta di rete, stub NOWCAST inerte, avvisi sullo scenario demo, decadimento, stabilità del testo
 - `intersection.test.ts` — distanza lungo il percorso, tempo in funzione della velocità, cella che si avvicina, che si allontana, che non intersecherà mai, ingresso nell'area
 - `demoTraffic.test.ts` — veicoli simulati assenti fuori dalla demo, nessuna richiesta di rete, percorsi stradali, rilevamento nel punto e nel momento giusti, conferma che alza davvero la confidenza
+- `parser.test.ts` — sinonimi, auto contro camion, contromano, persone, animali, acqua, corsie, e soprattutto **nessuna invenzione di attributi**
+- `voiceChain.test.ts` — da frase a evento, voce singola non confermata, trascrizione che non raggiunge il backend, degradazione senza riconoscimento vocale
+- `speech.test.ts` — priorità distinta dalla confidenza, cooldown e deduplicazione degli avvisi parlati, degradazione senza sintesi
 - `demoPipeline.test.ts` — catena completa in DEMO MODE a tempo simulato
 
 ---

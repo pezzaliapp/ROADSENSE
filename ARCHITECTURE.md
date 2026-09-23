@@ -477,6 +477,26 @@ supera la soglia di allerta**, e la demo lo rispetta invece di aggirarlo.
 Serve la conferma del secondo veicolo. È il comportamento voluto di ROAD
 SENSE — un singolo scossone non è una buca — e un test lo fissa.
 
+**ZERO TOUCH.** La tassonomia (`src/hazard/`) è un **raffinamento** del modello
+esistente, non una sua sostituzione: `EventType` resta la famiglia su cui
+lavorano TTL, aggregazione, icone e `ConfidenceEngine`, mentre `HazardType`
+descrive che cosa è stato osservato. Ogni pericolo appartiene a esattamente una
+famiglia, quindi **nessun motore è stato riscritto** per capirne uno nuovo.
+
+`src/voice/` segue la stessa forma degli altri provider: `VoiceProvider`
+astratto, `BrowserVoiceProvider` e `DemoVoiceProvider`. Il parser è una
+funzione pura, senza stato e senza rete — è il pezzo più testato del sistema
+perché è quello in cui un errore sarebbe più insidioso.
+
+`src/speech/` è un'**uscita** dell'`AlertEngine`, non un motore parallelo: non
+decide nulla, legge ciò che l'alert ha già deciso. Sa solo *quando* vale la
+pena parlare (deduplicazione e intervallo minimo).
+
+Una modifica al `ConfidenceEngine` è stata necessaria: una segnalazione vocale
+sarebbe altrimenti finita per caso nel peso «automatico». Ora ha un peso
+proprio, scelto perché **una voce sola resti sotto la soglia di allerta e due
+voci indipendenti la superino**.
+
 **Smart tyre.** `VehicleSample` in `SensorProvider.ts` prevede pressione,
 temperatura, indice di aderenza e un riferimento **tecnico** del sensore (mai
 riferibile a una persona). Basta implementare un provider.

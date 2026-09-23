@@ -35,6 +35,19 @@ Funzionante e verificata in locale.
 
 ---
 
+## Fase ZERO TOUCH — in corso
+
+- [x] Tassonomia strutturata dei pericoli e modello `RoadHazard`
+- [x] Priorità semantica, distinta dalla confidenza
+- [x] Parser vocale italiano, puro e testabile, che non inventa attributi
+- [x] `VoiceProvider` astratto: browser e demo
+- [x] Avvisi parlati come uscita dell'`AlertEngine`, con cooldown e dedup
+- [x] Indicatori GPS / SENSORI / VOCE con stati reali
+- [x] Sequenza demo voce → evento non confermato → conferma → avviso
+- [ ] **Prova su strada**: nessuna di queste funzioni è stata usata guidando
+- [ ] Verifica del riconoscimento vocale su iPhone reale
+- [ ] Valutare se l'elaborazione locale sia disponibile sui dispositivi target
+
 ## v0.1.1 — Cartografia conforme e pubblicazione
 
 - [x] Sostituita la sorgente cartografica: i server di OpenStreetMap bloccavano

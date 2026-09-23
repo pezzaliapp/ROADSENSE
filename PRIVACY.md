@@ -88,6 +88,50 @@ Il server riceve quindi un'area, non un punto, e **non registra** la richiesta.
 
 ---
 
+## La voce: l'unica cosa che può uscire dal telefono
+
+È l'eccezione più importante di questo documento, e va detta per prima.
+
+Il riconoscimento vocale dei browser è, per impostazione predefinita, un
+**servizio remoto**: l'audio viene inviato a un servizio del browser per essere
+trascritto. Non è una scelta di ROAD SENSE, è come funziona l'API.
+
+Per questo ROAD SENSE:
+
+- tiene la voce **spenta** finché non viene attivata esplicitamente;
+- chiede l'**elaborazione locale** dove il browser la offre (`processLocally`);
+- **non accende il microfono** se l'elaborazione locale non è disponibile e non
+  è stato dato un consenso esplicito.
+
+### Il consenso, parola per parola
+
+Quando il browser **non** elabora la voce sul dispositivo, toccare `VOCE` non
+accende niente. L'indicatore diventa `VOCE ?` e compare questo testo:
+
+> Questo browser non elabora la voce sul dispositivo: l'audio verrebbe inviato
+> a un servizio esterno. Tocca di nuovo VOCE per accettare.
+
+Solo il **secondo** tocco autorizza, e allora compare:
+
+> Voce attiva. L'audio è elaborato da un servizio esterno del browser, non da
+> ROAD SENSE.
+
+Il consenso **non viene ricordato** fra una sessione e l'altra: autorizzare
+l'invio di audio a un servizio esterno va fatto consapevolmente, non ereditato
+da una decisione presa settimane prima.
+
+Quello che ROAD SENSE garantisce comunque:
+
+- **la trascrizione non lascia mai il dispositivo.** Il campo `rawTranscript`
+  viene scartato dalla validazione, che ricostruisce l'oggetto dai soli campi
+  previsti. Nemmeno il pericolo, il soggetto o la corsia raggiungono il
+  backend: parte solo l'evento come qualsiasi altro;
+- nessun audio viene registrato, salvato o conservato da ROAD SENSE;
+- la **sintesi** vocale — gli avvisi parlati — è locale e non invia nulla.
+
+Se questo compromesso non è accettabile, la voce resta spenta e ROAD SENSE
+funziona esattamente come prima.
+
 ## Cosa NON viene raccolto. Mai. Da nessuna parte
 
 - nome, cognome, email, numero di telefono, username;
@@ -99,7 +143,9 @@ Il server riceve quindi un'area, non un punto, e **non registra** la richiesta.
 - orari abituali, luoghi frequentati, profili comportamentali;
 - contatti, rubrica, foto, microfono, fotocamera;
 - identificatori pubblicitari;
-- fingerprinting del dispositivo.
+- fingerprinting del dispositivo;
+- registrazioni audio: ROAD SENSE non ne conserva nessuna;
+- trascrizioni di ciò che viene detto in auto: restano sul dispositivo.
 
 Non ci sono analytics. Non ci sono tracker. Non ci sono script di terze parti:
 la Content Security Policy consente il caricamento di codice **solo** dal

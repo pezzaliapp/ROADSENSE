@@ -8,6 +8,8 @@
 import { formatDistance } from '../core/geo';
 import type { ActiveAlert } from '../core/AlertEngine';
 import { EVENT_META } from './eventMeta';
+import { hazardText } from './hazardText';
+import type { HazardAssessment } from '../hazard/assessment';
 import { confidenceLevel } from '../core/ConfidenceEngine';
 
 /**
@@ -22,6 +24,12 @@ export type AlertSource = 'demo' | 'local' | 'network';
 interface Props {
   alert: ActiveAlert | null;
   source: AlertSource;
+  /**
+   * Valutazione della zona: stato di conferma, priorita' e descrizione piu'
+   * informativa. Una segnalazione vocale sa dire "veicolo in avaria in
+   * seconda corsia"; un accelerometro sa dire solo "fondo anomalo".
+   */
+  assessment?: HazardAssessment | null;
   onDismiss: () => void;
 }
 
@@ -42,13 +50,24 @@ function reportersLabel(count: number, source: AlertSource): string {
   return `${count} ${count === 1 ? 'SEGNALAZIONE' : 'SEGNALAZIONI'}`;
 }
 
-export function AlertBanner({ alert, source, onDismiss }: Props) {
+export function AlertBanner({ alert, source, assessment, onDismiss }: Props) {
   if (!alert) return null;
   const meta = EVENT_META[alert.cluster.type];
+  // Il nome piu' informativo disponibile: dalla voce se c'e', altrimenti la
+  // famiglia. La stessa formulazione che viene pronunciata.
+  const nome = hazardText(alert.cluster.type, assessment?.detail);
+  // GRAVITA' E AFFIDABILITA' SONO COSE DIVERSE, e il banner lo dice.
+  // Un pericolo critico viene annunciato anche da una sola segnalazione,
+  // dichiarando pero' che nessun altro lo ha ancora confermato.
+  const nonConfermato = assessment?.confirmation === 'reported';
+  const critico = assessment?.priority === 'critical';
   const level = confidenceLevel(alert.cluster.confidence);
   // "Possibile" quando la zona non e' ancora confermata da piu' rilevamenti:
   // meglio un avviso onesto che un falso allarme presentato come certezza.
-  const prefix = level === 'possible' ? 'Possibile ' : '';
+  // "Segnalato" quando la fonte e' una persona non ancora confermata:
+  // e' piu' onesto di "possibile", che suggerirebbe un'incertezza sul
+  // fenomeno invece che sulla conferma.
+  const prefix = nonConfermato ? 'Segnalato: ' : level === 'possible' ? 'Possibile ' : '';
   const severe = alert.cluster.severity === 3;
 
   return (
@@ -64,12 +83,17 @@ export function AlertBanner({ alert, source, onDismiss }: Props) {
       <div>
         <div className="a-text">
           {prefix}
-          {prefix ? meta.label.toLowerCase() : meta.label} tra {formatDistance(alert.distanceM)}
+          {prefix ? nome.toLowerCase() : nome} tra {formatDistance(alert.distanceM)}
         </div>
         <div className="a-sub">
           {reportersLabel(alert.cluster.reporters, source)} · AFFIDABILITA'{' '}
           {Math.round(alert.cluster.confidence * 100)}%
         </div>
+        {nonConfermato && (
+          <div className={`a-unconfirmed${critico ? ' critical' : ''}`}>
+            SEGNALAZIONE NON ANCORA CONFERMATA
+          </div>
+        )}
       </div>
     </div>
   );

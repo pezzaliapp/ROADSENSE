@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ALERT, API, APP, MAP, MERGE_RADIUS_M, PRIVACY, SENSORS, WEATHER } from './config/config';
+import { ALERT, API, APP, MAP, MERGE_RADIUS_M, PRIVACY, SENSORS, VOICE, WEATHER } from './config/config';
 import { AlertEngine, type ActiveAlert } from './core/AlertEngine';
 import { buildClusters } from './core/ConfidenceEngine';
 import { DetectionEngine } from './core/DetectionEngine';
@@ -27,6 +27,18 @@ import { DemoSensorProvider } from './core/sensors/DemoSensorProvider';
 import { DEMO_ROUTE } from './demo/demoRoute';
 import { DEMO_ROUTE_CENTER } from './demo/demoRoute';
 import { DemoTrafficProvider } from './demo/DemoTrafficProvider';
+import { BrowserVoiceProvider } from './voice/BrowserVoiceProvider';
+import { DemoVoiceProvider } from './voice/DemoVoiceProvider';
+import type { VoiceProvider, VoiceStatus } from './voice/VoiceProvider';
+import { parseVoiceReport } from './voice/parser';
+import { buildVoiceEvent } from './voice/voiceEvent';
+import { HAZARD_META } from './hazard/taxonomy';
+import { admitsAlert, assessCluster, type HazardAssessment } from './hazard/assessment';
+import { AlertSpeechEngine } from './speech/AlertSpeechEngine';
+import { BrowserSpeechProvider } from './speech/BrowserSpeechProvider';
+import { SilentSpeechProvider } from './speech/SpeechProvider';
+import { roadAlertPhrase, weatherAlertPhrase } from './speech/phrases';
+import { DEMO_VOICE_SCRIPT } from './demo/demoVoiceScript';
 import { routeAheadFrom } from './demo/routeAhead';
 import type { DemoVehicleState } from './demo/DemoVehicle';
 import type { EventCluster, EventType, GeoSample, RoadEvent, SystemStatus } from './core/types';
@@ -72,11 +84,34 @@ export default function App() {
     gps: 'off',
     sensors: 'off',
     network: navigator.onLine ? (backendEnabled() ? 'online' : 'local') : 'offline',
+    voice: 'off',
   });
+  /** Conferma visiva non interattiva di una segnalazione vocale accolta. */
+  const [voiceReceipt, setVoiceReceipt] = useState<string | null>(null);
+  /** Valutazione della zona dell'avviso mostrato: conferma, priorita', dettaglio. */
+  const [alertAssessment, setAlertAssessment] = useState<HazardAssessment | null>(null);
+  /**
+   * La voce e' spenta finche' non viene attivata: il riconoscimento dei
+   * browser e' per impostazione predefinita un servizio remoto, e accenderlo
+   * senza chiederlo tradirebbe la promessa di privacy.
+   */
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  /**
+   * Consenso all'elaborazione REMOTA dell'audio.
+   *
+   *   none     non richiesto, o non ancora dato
+   *   pending  chiesto, in attesa della seconda conferma
+   *   granted  dato esplicitamente
+   *
+   * Vive in memoria e non viene ricordato fra una sessione e l'altra: un
+   * consenso a inviare audio a un servizio esterno va ridato consapevolmente,
+   * non ereditato da una decisione presa settimane prima.
+   */
+  const [voiceConsent, setVoiceConsent] = useState<'none' | 'pending' | 'granted'>('none');
 
   const reducedMotion = useReducedMotion();
   const { updateReady, applyUpdate } = usePwaUpdate();
-  useWakeLock(running);
+  const wakeLock = useWakeLock(running);
 
   // -- engine (non provocano re-render) ------------------------------------
   const storeRef = useRef<EventStore | null>(null);
@@ -84,6 +119,15 @@ export default function App() {
   const detectRef = useRef<DetectionEngine>(new DetectionEngine());
   const alertRef = useRef<AlertEngine>(new AlertEngine());
   const weatherEngineRef = useRef<WeatherAlertEngine>(new WeatherAlertEngine());
+  const voiceRef = useRef<VoiceProvider | null>(null);
+  const voiceReceiptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speechRef = useRef<AlertSpeechEngine>(
+    new AlertSpeechEngine(
+      new BrowserSpeechProvider().isSupported()
+        ? new BrowserSpeechProvider()
+        : new SilentSpeechProvider(),
+    ),
+  );
   const roadAlertRef = useRef<ActiveAlert | null>(null);
   const weatherAlertRef = useRef<WeatherAlert | null>(null);
   /** Le celle in un ref: cosi' `handleGeo` resta stabile fra i render. */
@@ -302,19 +346,33 @@ export default function App() {
       // Valutazione alert a ogni aggiornamento GPS (~1 Hz): sufficiente e
       // molto piu' economico di un ciclo di rendering continuo.
       const current = buildClusters(storeRef.current?.all() ?? []);
-      const next = alertRef.current.evaluate(current, {
-        lat: geo.lat,
-        lon: geo.lon,
-        heading: geo.heading,
-        speedMps: geo.speedMps,
-      });
+      // La politica di ammissione vive qui, non dentro AlertEngine: tiene
+      // insieme conferma, priorita' e soglia storica senza che il motore degli
+      // avvisi debba conoscere la tassonomia dei pericoli.
+      const knownEvents = storeRef.current?.all() ?? [];
+      const next = alertRef.current.evaluate(
+        current,
+        { lat: geo.lat, lon: geo.lon, heading: geo.heading, speedMps: geo.speedMps },
+        geo.ts,
+        (cluster) => admitsAlert(cluster, assessCluster(cluster, knownEvents), ALERT.minConfidence),
+      );
       if (next) {
         roadAlertRef.current = next;
         setAlert(next);
+        // La voce e' un'USCITA dell'alert, non un motore parallelo: parla di
+        // cio' che l'AlertEngine ha gia' deciso.
+        const assessment = assessCluster(next.cluster, knownEvents);
+        setAlertAssessment(assessment);
+        speechRef.current.announce(
+          next.cluster.id,
+          roadAlertPhrase(next.cluster, next.distanceM, assessment),
+          geo.ts,
+        );
         if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
         alertTimerRef.current = setTimeout(() => {
           roadAlertRef.current = null;
           setAlert(null);
+          setAlertAssessment(null);
         }, ALERT.displayMs);
       }
 
@@ -380,6 +438,11 @@ export default function App() {
       if (weather) {
         weatherAlertRef.current = weather;
         setWeatherAlert(weather);
+        speechRef.current.announce(
+          `weather:${weather.cell.id}`,
+          weatherAlertPhrase(weather),
+          geo.ts,
+        );
         if (weatherTimerRef.current) clearTimeout(weatherTimerRef.current);
         weatherTimerRef.current = setTimeout(() => {
           weatherAlertRef.current = null;
@@ -419,6 +482,138 @@ export default function App() {
     [demo, recordEvent],
   );
 
+  /**
+   * Una frase e' stata riconosciuta.
+   *
+   * Il parser decide cosa dice; qui si costruisce l'evento e si mostra una
+   * conferma VISIVA che sparisce da sola. Nessun pulsante da premere: durante
+   * la guida non si tocca nulla.
+   */
+  const handleTranscript = useCallback(
+    (transcript: string) => {
+      const parsed = parseVoiceReport(transcript);
+      if (!parsed.ok) return;
+
+      const geo = sensorRef.current?.getLastGeo() ?? null;
+      const event = buildVoiceEvent(parsed.report, geo, {
+        reporterId: getAnonId(),
+        ...(demoRef.current ? { demo: true } : {}),
+      });
+      if (!event) {
+        showToast('Segnalazione vocale ignorata: posizione non disponibile.');
+        return;
+      }
+
+      recordEvent(event);
+
+      const meta = HAZARD_META[parsed.report.hazard];
+      setVoiceReceipt(meta.label);
+      if (voiceReceiptTimerRef.current) clearTimeout(voiceReceiptTimerRef.current);
+      voiceReceiptTimerRef.current = setTimeout(
+        () => setVoiceReceipt(null),
+        VOICE.confirmationMs,
+      );
+    },
+    [recordEvent, showToast],
+  );
+
+  // -- riconoscimento vocale: solo durante il monitoraggio, solo se attivato
+  useEffect(() => {
+    if (!running || !voiceEnabled) return;
+
+    const provider: VoiceProvider = demo
+      ? new DemoVoiceProvider(DEMO_VOICE_SCRIPT)
+      // L'elaborazione remota parte SOLO con consenso esplicito.
+      : new BrowserVoiceProvider(voiceConsent === 'granted');
+    voiceRef.current = provider;
+
+    const caps = provider.capabilities();
+    if (!caps.supported) {
+      setStatus((s) => ({ ...s, voice: 'unsupported' }));
+      return;
+    }
+
+    provider.start({
+      onTranscript: handleTranscript,
+      onStatus: (voice: VoiceStatus) => setStatus((s) => ({ ...s, voice })),
+    });
+
+    return () => {
+      provider.stop();
+      voiceRef.current = null;
+    };
+  }, [running, voiceEnabled, demo, voiceConsent, handleTranscript]);
+
+  /**
+   * Stato della voce a monitoraggio fermo.
+   * Distingue "il browser non puo'" da "non attivata" da "attivata, partira'
+   * con START": sono tre cose diverse e vanno dette.
+   */
+  useEffect(() => {
+    if (running) return;
+    const supported = demo || new BrowserVoiceProvider().capabilities().supported;
+    if (!supported) {
+      setStatus((s) => ({ ...s, voice: 'unsupported' }));
+      return;
+    }
+    if (voiceConsent === 'pending') {
+      setStatus((s) => ({ ...s, voice: 'consent' }));
+      return;
+    }
+    setStatus((s) => ({ ...s, voice: voiceEnabled ? 'ready' : 'off' }));
+  }, [voiceEnabled, running, demo, voiceConsent]);
+
+  /**
+   * Accende e spegne la voce.
+   *
+   * Se il browser non elabora l'audio sul dispositivo servono DUE tocchi: il
+   * primo spiega cosa accadrebbe, il secondo lo autorizza. Finche' il consenso
+   * non arriva il microfono NON viene acceso - il provider si rifiuta proprio
+   * di partire - e l'indicatore mostra "VOCE ?" invece di dichiarare
+   * un'attivazione che non c'e' stata.
+   */
+  const toggleVoice = useCallback(() => {
+    if (voiceEnabled) {
+      setVoiceEnabled(false);
+      return;
+    }
+
+    // In demo la voce e' recitata: nessun microfono, nessun audio, nulla da
+    // autorizzare.
+    if (demo) {
+      setVoiceEnabled(true);
+      return;
+    }
+
+    const caps = new BrowserVoiceProvider().capabilities();
+    if (!caps.supported) return;
+
+    if (caps.onDevice || voiceConsent === 'granted') {
+      setVoiceEnabled(true);
+      if (!caps.onDevice) {
+        showToast(
+          "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
+        );
+      }
+      return;
+    }
+
+    if (voiceConsent === 'none') {
+      setVoiceConsent('pending');
+      showToast(
+        "Questo browser non elabora la voce sul dispositivo: l'audio verrebbe inviato a un servizio esterno. Tocca di nuovo VOCE per accettare.",
+      );
+      return;
+    }
+
+    // Secondo tocco: consenso dato.
+    setVoiceConsent('granted');
+    setVoiceEnabled(true);
+    showToast(
+      "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
+    );
+  }, [voiceEnabled, demo, voiceConsent, showToast]);
+
   // -- START / STOP ---------------------------------------------------------
   const start = useCallback(async () => {
     const engine = sensorRef.current;
@@ -457,6 +652,10 @@ export default function App() {
     setStatus((s) => ({ ...s, gps: 'off', sensors: 'off' }));
     setSpeedMps(null);
     weatherSpeedRef.current = null;
+    // La voce viene fermata dal proprio effetto quando `running` torna
+    // falso: qui basta interrompere la sintesi e togliere la conferma.
+    speechRef.current.stop();
+    setVoiceReceipt(null);
     setAlert(null);
     roadAlertRef.current = null;
     setWeatherAlert(null);
@@ -507,6 +706,8 @@ export default function App() {
       if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       if (weatherTimerRef.current) clearTimeout(weatherTimerRef.current);
+      if (voiceReceiptTimerRef.current) clearTimeout(voiceReceiptTimerRef.current);
+      if (voiceReceiptTimerRef.current) clearTimeout(voiceReceiptTimerRef.current);
     },
     [],
   );
@@ -557,7 +758,14 @@ export default function App() {
 
   return (
     <div className="app">
-      <StatusBar status={status} demo={demo} />
+      <StatusBar
+        status={status}
+        wakeLock={wakeLock}
+        running={running}
+        demo={demo}
+        // Attivabile solo da fermi: durante la guida non si tocca nulla.
+        {...(running ? {} : { onToggleVoice: toggleVoice })}
+      />
 
       {updateReady && (
         <div className="update-bar">
@@ -588,10 +796,12 @@ export default function App() {
         />
         <AlertBanner
           alert={alert}
+          assessment={alertAssessment}
           source={demo ? 'demo' : backendEnabled() ? 'network' : 'local'}
           onDismiss={() => {
             roadAlertRef.current = null;
             setAlert(null);
+            setAlertAssessment(null);
           }}
         />
         {/* Un solo banner alla volta: l'avviso stradale ha la precedenza,
@@ -624,6 +834,14 @@ export default function App() {
           </div>
         )}
         {toast && <div className="toast">{toast}</div>}
+        {/* Conferma non interattiva: appare, informa, sparisce. Nessun
+            pulsante da premere mentre si guida. */}
+        {voiceReceipt && (
+          <div className="voice-receipt" role="status">
+            <span className="vr-title">SEGNALAZIONE RICEVUTA</span>
+            <span className="vr-what">{voiceReceipt}</span>
+          </div>
+        )}
       </div>
 
       {/* Una riga sola, e solo quando serve: prima di partire, in modalita'
@@ -633,6 +851,12 @@ export default function App() {
         <p className="intro">
           ROAD SENSE usa posizione e sensori del telefono per rilevare irregolarita' della
           strada. In questa beta i dati restano sul dispositivo.
+          {/* Limite reale, non aggirabile da una PWA: va detto qui, non solo
+              nella documentazione, perche' cambia come si usa l'app. */}
+          <span className="intro-strong">
+            {' '}Durante il test lascia ROAD SENSE aperto e lo schermo acceso. La modalità in
+            background non è ancora disponibile.
+          </span>
         </p>
       )}
 

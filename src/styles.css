@@ -83,7 +83,19 @@ button {
   font-weight: 500;
 }
 
-.chips { display: flex; gap: 6px; }
+/* La riga puo' contenere fino a sei indicatori: scorre invece di troncarne
+   uno. Un'informazione tagliata a meta' e' peggio di una da raggiungere. */
+.chips {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chips::-webkit-scrollbar { display: none; }
+
+.brand { flex: 0 0 auto; }
 
 .chip {
   font-size: 10px;
@@ -272,6 +284,18 @@ button {
   color: var(--text);
   line-height: 1.3;
 }
+
+/* Stato di conferma: detto esplicitamente, perche' un avviso su una sola
+   segnalazione non deve sembrare un fatto accertato. */
+.alert .a-unconfirmed {
+  margin-top: 4px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: #b8c0cc;
+}
+
+.alert .a-unconfirmed.critical { color: var(--warn); }
 
 /* Dicitura di simulazione: sempre presente sugli avvisi meteo, discreta. */
 .alert .a-sim {
@@ -462,6 +486,8 @@ button {
   text-align: center;
 }
 
+.intro .intro-strong { color: #b8c0cc; }
+
 /* ---------- barra comandi ---------- */
 
 .controls {
@@ -518,6 +544,38 @@ button {
 
 .statusline .dot { color: var(--muted); }
 .statusline .dot.live { color: var(--ok); }
+
+/* Conferma di una segnalazione vocale: compare, informa, sparisce.
+   Nessun elemento interattivo, perche' e' pensata per essere letta in un
+   colpo d'occhio mentre si guida. */
+.voice-receipt {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 34px;
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #0f2018;
+  border: 1px solid var(--ok);
+  pointer-events: none;
+}
+
+.voice-receipt .vr-title {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: var(--ok);
+}
+
+.voice-receipt .vr-what {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
 
 /* ---------- scheda segnalazione ---------- */
 

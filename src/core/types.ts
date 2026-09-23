@@ -7,6 +7,8 @@
  */
 
 /** Categorie di evento stradale gestite da ROAD SENSE. */
+import type { HazardType } from '../hazard/taxonomy';
+
 export const EVENT_TYPES = [
   'pothole', // buca
   'rough', // fondo irregolare / sconnesso (tipicamente automatico)
@@ -15,6 +17,17 @@ export const EVENT_TYPES = [
   'slippery', // fondo scivoloso (ghiaccio, gasolio, foglie)
   'accident', // incidente
   'roadworks', // lavori in corso
+  // Famiglie introdotte con la tassonomia ZERO TOUCH. Sono additive: gli
+  // engine esistenti continuano a funzionare senza modifiche, perche'
+  // lavorano sulla famiglia e non sul pericolo specifico.
+  'vehicle', // veicolo fermo, in avaria o dal comportamento pericoloso
+  'wrong_way', // veicolo contromano
+  'person', // persona o ciclista sulla carreggiata
+  'animal', // animali sulla strada
+  'blocked', // carreggiata interrotta: frana, strada chiusa
+  'queue', // coda improvvisa, casello bloccato
+  'gathering', // manifestazione, processione, evento sulla strada
+  'weather', // fenomeno meteorologico segnalato da chi guida
   'other', // altro pericolo
 ] as const;
 
@@ -23,8 +36,15 @@ export type EventType = (typeof EVENT_TYPES)[number];
 /** 1 = lieve, 2 = medio, 3 = grave. */
 export type Severity = 1 | 2 | 3;
 
-/** Origine del dato. Utile per pesare la confidenza, non per identificare l'utente. */
-export type EventSource = 'auto' | 'manual';
+/**
+ * Origine del dato. Utile per pesare la confidenza, non per identificare
+ * l'utente.
+ *
+ *   auto    rilevato dai sensori del dispositivo
+ *   manual  scelto a mano dal pulsante SEGNALA
+ *   voice   dettato a voce da chi guida, senza toccare il telefono
+ */
+export type EventSource = 'auto' | 'manual' | 'voice';
 
 /**
  * Dati tecnici minimi allegati a un rilevamento automatico.
@@ -71,6 +91,27 @@ export interface RoadEvent {
   /** Identificatore anonimo temporaneo del segnalatore. */
   reporterId: string;
   sensorData?: EventSensorData;
+
+  /**
+   * Classificazione fine del pericolo, quando disponibile.
+   * `type` resta la famiglia su cui lavorano gli engine; `hazard` dice che
+   * cosa e' stato osservato davvero. I rilevamenti automatici dei sensori non
+   * lo valorizzano: un accelerometro non sa distinguere una buca da un tombino.
+   */
+  hazard?: HazardType;
+  /** Soggetto coinvolto, se la segnalazione lo nomina esplicitamente. */
+  subject?: HazardSubject;
+  /** Stato del soggetto, se la segnalazione lo nomina esplicitamente. */
+  state?: HazardState;
+  /** Corsia, SOLO se pronunciata. Non viene mai dedotta. */
+  lane?: RoadLane;
+  /**
+   * Trascrizione grezza della frase, conservata per poter capire perche' il
+   * parser ha deciso cosi'. Non lascia mai il dispositivo: la validazione
+   * lato backend scarta ogni campo non previsto.
+   */
+  rawTranscript?: string;
+
   /** true se generato in DEMO MODE: non viene mai inviato al backend. */
   demo?: boolean;
 }
@@ -99,6 +140,34 @@ export interface EventCluster {
   expiresAt: number;
   demo?: boolean;
 }
+
+/** Soggetto nominato in una segnalazione. */
+export type HazardSubject =
+  | 'car'
+  | 'truck'
+  | 'motorcycle'
+  | 'bicycle'
+  | 'person'
+  | 'animal'
+  | 'vehicle';
+
+/** Stato del soggetto, quando pronunciato. */
+export type HazardState = 'stopped' | 'broken_down' | 'moving' | 'wrong_way' | 'blocking';
+
+/**
+ * Corsia o posizione trasversale.
+ * Viene valorizzata SOLO se pronunciata: dedurla sarebbe inventare.
+ */
+export type RoadLane =
+  | 'first_lane'
+  | 'second_lane'
+  | 'third_lane'
+  | 'driving_lane'
+  | 'central_lane'
+  | 'overtaking_lane'
+  | 'emergency_lane'
+  | 'carriageway'
+  | 'roadside';
 
 /** Livelli qualitativi derivati dalla confidenza aggregata. */
 export type ConfidenceLevel = 'possible' | 'probable' | 'confirmed';
@@ -147,4 +216,22 @@ export interface SystemStatus {
   gps: 'ok' | 'weak' | 'off' | 'denied';
   sensors: 'ok' | 'partial' | 'off';
   network: 'online' | 'offline' | 'local';
+  /**
+   * Riconoscimento vocale. Gli stati sono distinti perche' significano cose
+   * diverse a chi guarda:
+   *   unsupported  il browser non puo'
+   *   off          si puo', ma non e' stato attivato
+   *   ready        attivato, entrera' in ascolto con START
+   *   listening    in ascolto adesso
+   */
+  voice:
+    | 'unsupported'
+    | 'off'
+    /** In attesa di un consenso esplicito all'elaborazione remota dell'audio. */
+    | 'consent'
+    | 'ready'
+    | 'listening'
+    | 'restarting'
+    | 'denied'
+    | 'error';
 }

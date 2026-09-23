@@ -126,6 +126,17 @@ export const TTL_MS: Record<EventType, number> = {
   roadworks: 7 * DAY,
   rough: 30 * DAY,
   pothole: 45 * DAY,
+
+  // Famiglie della tassonomia ZERO TOUCH. I valori seguono la durata reale
+  // del fenomeno: un contromano dura minuti, una frana ore.
+  wrong_way: 15 * MIN,
+  person: 30 * MIN,
+  queue: 45 * MIN,
+  vehicle: 1 * HOUR,
+  animal: 1 * HOUR,
+  weather: 1 * HOUR,
+  gathering: 4 * HOUR,
+  blocked: 12 * HOUR,
 };
 
 /**
@@ -141,6 +152,17 @@ export const MERGE_RADIUS_M: Record<EventType, number> = {
   accident: 80,
   roadworks: 120,
   other: 40,
+
+  // Il raggio segue l'estensione del fenomeno: un veicolo fermo e' un punto,
+  // una coda e' lunga, un contromano si muove e va trattato come un corridoio.
+  vehicle: 60,
+  person: 80,
+  blocked: 100,
+  animal: 150,
+  gathering: 200,
+  queue: 300,
+  wrong_way: 500,
+  weather: 800,
 };
 
 // ---------------------------------------------------------------------------
@@ -224,6 +246,55 @@ export const MAP = {
 // mai richiedere modifiche a MapView.
 export { ACTIVE_MAP_PROVIDER, MAP_PROVIDERS } from './mapProviders';
 export type { MapTileProvider } from './mapProviders';
+
+// ---------------------------------------------------------------------------
+// VOCE (ZERO TOUCH)
+// ---------------------------------------------------------------------------
+/**
+ * Parametri del riconoscimento vocale e degli avvisi parlati.
+ *
+ * ATTENZIONE, ed e' il punto piu' importante di questo blocco: il
+ * riconoscimento vocale dei browser e' per impostazione predefinita un
+ * servizio REMOTO. L'audio lascia il dispositivo. ROAD SENSE chiede quindi
+ * l'elaborazione locale quando il browser la offre, e lascia la voce spenta
+ * finche' non viene attivata esplicitamente.
+ */
+export const VOICE = {
+  /** Lingua del riconoscimento. */
+  lang: 'it-IT',
+  /**
+   * Parola di attivazione. Senza, ogni conversazione in auto diventerebbe una
+   * segnalazione: e' cio' che rende utilizzabile un microfono sempre acceso.
+   */
+  wakeWords: ['road sense', 'roadsense', 'rodesense', 'rod sense'],
+  /**
+   * Confidenza assegnata a una segnalazione vocale singola.
+   * Volutamente sotto la soglia di allerta: una voce sola non conferma nulla,
+   * esattamente come un solo rilevamento automatico.
+   */
+  singleReportConfidence: 0.55,
+  /** Durata della conferma visiva "SEGNALAZIONE RICEVUTA", ms. */
+  confirmationMs: 4500,
+  /** Attesa prima di riavviare il riconoscimento dopo una pausa, ms. */
+  restartDelayMs: 400,
+  /** Riavvii consecutivi falliti oltre i quali si rinuncia. */
+  maxRestartFailures: 5,
+} as const;
+
+/**
+ * Avvisi parlati. Sono un'USCITA dell'AlertEngine, non un motore parallelo:
+ * non decidono nulla, leggono cio' che l'alert ha gia' deciso.
+ */
+export const SPEECH = {
+  lang: 'it-IT',
+  rate: 1.05,
+  pitch: 1,
+  volume: 1,
+  /** Non ripetere lo stesso avviso prima di questo intervallo, ms. */
+  cooldownMs: 90_000,
+  /** Intervallo minimo fra due enunciati QUALSIASI, ms. */
+  minGapMs: 8000,
+} as const;
 
 // ---------------------------------------------------------------------------
 // PRIVACY / IDENTIFICATORI
@@ -324,6 +395,29 @@ export const DEMO = {
      * dell'evento e della concordanza fra due veicoli.
      */
     detection: { peak: 9.5, impulseMs: 150, baselineRms: 0.4, speedMps: 11 },
+    /**
+     * Secondo punto dello scenario: un veicolo simulato segnala A VOCE un
+     * veicolo in avaria in seconda corsia, e il secondo lo conferma passando
+     * di li'. Serve a mostrare che una voce sola non basta.
+     */
+    voiceReport: {
+      at: 0.12,
+      phrase: 'ROAD SENSE, auto in avaria ferma in seconda corsia',
+    },
+    /**
+     * Terzo punto: un pericolo CRITICO segnalato da UN SOLO veicolo.
+     *
+     * Serve a mostrare che gravita' e affidabilita' sono cose diverse: un
+     * camion contromano viene annunciato anche senza conferma, dichiarando
+     * pero' che nessun altro lo ha ancora visto. Aspettare una seconda voce
+     * prima di nominarlo sarebbe indifendibile.
+     */
+    criticalReport: {
+      at: 0.17,
+      phrase: 'ROAD SENSE, camion contromano',
+      /** Indice del veicolo che segnala: uno solo, per restare non confermato. */
+      byVehicle: 0,
+    },
   },
 
   /**

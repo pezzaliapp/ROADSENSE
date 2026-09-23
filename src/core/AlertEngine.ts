@@ -56,11 +56,28 @@ export function lookaheadMeters(speedMps: number | null): number {
 }
 
 /**
+ * Decide se una zona merita di essere annunciata, a prescindere da dove si
+ * trovi. Per impostazione predefinita e' la soglia di confidenza storica.
+ *
+ * E' un parametro perche' la politica non appartiene a questo motore: qui si
+ * sa dove sono le cose, non quanto contano. Chi chiama puo' passare una regola
+ * piu' ricca - conferma da piu' dispositivi, pericolo critico - senza che
+ * AlertEngine debba conoscere la tassonomia dei pericoli.
+ */
+export type AdmissionPolicy = (cluster: EventCluster) => boolean;
+
+const defaultAdmission: AdmissionPolicy = (cluster) => cluster.confidence >= ALERT.minConfidence;
+
+/**
  * Determina se un cluster e' rilevante per il conducente in questo istante.
  * Funzione pura.
  */
-export function isRelevant(cluster: EventCluster, driver: DriverState): AlertCandidate | null {
-  if (cluster.confidence < ALERT.minConfidence) return null;
+export function isRelevant(
+  cluster: EventCluster,
+  driver: DriverState,
+  admits: AdmissionPolicy = defaultAdmission,
+): AlertCandidate | null {
+  if (!admits(cluster)) return null;
 
   const dist = distanceM({ lat: driver.lat, lon: driver.lon }, { lat: cluster.lat, lon: cluster.lon });
   const lookahead = lookaheadMeters(driver.speedMps);
@@ -100,11 +117,12 @@ export class AlertEngine {
     clusters: readonly EventCluster[],
     driver: DriverState,
     now: number = Date.now(),
+    admits: AdmissionPolicy = defaultAdmission,
   ): ActiveAlert | null {
     let best: AlertCandidate | null = null;
 
     for (const cluster of clusters) {
-      const candidate = isRelevant(cluster, driver);
+      const candidate = isRelevant(cluster, driver, admits);
       if (!candidate) continue;
       const last = this.lastAlertAt.get(cluster.id);
       if (last !== undefined && now - last < ALERT.cooldownMs) continue;

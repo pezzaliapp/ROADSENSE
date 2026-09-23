@@ -76,7 +76,9 @@ export function validateEvent(
     return { ok: false, error: 'severity non valida' };
   }
 
-  if (e.source !== 'auto' && e.source !== 'manual') return { ok: false, error: 'source non valida' };
+  if (e.source !== 'auto' && e.source !== 'manual' && e.source !== 'voice') {
+    return { ok: false, error: 'source non valida' };
+  }
 
   if (!isFiniteNumber(e.confidence) || e.confidence < 0 || e.confidence > 1) {
     return { ok: false, error: 'confidence fuori range' };
@@ -113,6 +115,10 @@ export function validateEvent(
   const sensor = sanitizeSensorData(e.sensorData);
   if (sensor) value.sensorData = sensor;
 
+  // NOTA: `hazard`, `subject`, `state`, `lane` e soprattutto `rawTranscript`
+  // NON vengono ricopiati. L'oggetto viene ricostruito dai soli campi
+  // elencati sopra, quindi la trascrizione di cio' che una persona ha detto
+  // in auto resta sul suo dispositivo e non puo' raggiungere alcun server.
   return { ok: true, value };
 }
 

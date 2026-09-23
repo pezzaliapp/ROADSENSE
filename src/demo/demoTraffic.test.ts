@@ -181,7 +181,14 @@ describe('rilevamento e conferma', () => {
     });
     await vi.advanceTimersByTimeAsync(ms);
     traffic.stop();
-    return { events, flashes };
+    // Lo scenario produce due sorgenti distinte: i rilevamenti automatici
+    // della buca e le segnalazioni vocali. Vanno guardate separatamente.
+    return {
+      events,
+      flashes,
+      sensore: events.filter((e) => e.source === 'auto'),
+      vocali: events.filter((e) => e.source === 'voice'),
+    };
   }
 
   it('non genera eventi prima che un veicolo abbia raggiunto la buca', async () => {
@@ -198,7 +205,7 @@ describe('rilevamento e conferma', () => {
   });
 
   it('ogni veicolo rileva la buca attraversandola, una volta per giro', async () => {
-    const { events } = await collect(120_000);
+    const { sensore: events } = await collect(120_000);
     expect(events).toHaveLength(2);
     const reporters = new Set(events.map((e) => e.reporterId));
     expect(reporters.size).toBe(2);
@@ -212,14 +219,14 @@ describe('rilevamento e conferma', () => {
   });
 
   it('il primo veicolo rileva prima del secondo', async () => {
-    const { events } = await collect(120_000);
-    expect(events[0]!.ts).toBeLessThan(events[1]!.ts);
+    const { sensore } = await collect(120_000);
+    expect(sensore[0]!.ts).toBeLessThan(sensore[1]!.ts);
   });
 
   it('mostra "BUCA RILEVATA" accanto al veicolo che rileva', async () => {
     const { flashes } = await collect(20_000);
     expect(flashes.length).toBeGreaterThan(0);
-    expect(flashes.every((f) => f.endsWith(':BUCA RILEVATA'))).toBe(true);
+    expect(flashes.every((f) => /BUCA RILEVATA|SEGNALAZIONE VOCALE/.test(f))).toBe(true);
     // L'etichetta e' temporanea, non resta accesa per sempre.
     const { flashes: piuTardi } = await collect(120_000);
     const ultimi = piuTardi.slice(-5);
@@ -243,7 +250,7 @@ describe('rilevamento e conferma', () => {
     // E' il comportamento voluto di ROAD SENSE, non un limite della demo:
     // un singolo rilevamento automatico non produce un evento su cui allertare.
     // La demo lo rispetta invece di aggirarlo.
-    const { events } = await collect(120_000);
+    const { sensore: events } = await collect(120_000);
     const now = events[1]!.ts;
     const conUno = buildClusters([events[0]!], now)[0]!;
     const conDue = buildClusters(events, now)[0]!;
@@ -252,7 +259,7 @@ describe('rilevamento e conferma', () => {
   });
 
   it('il secondo veicolo aumenta DAVVERO la confidenza, tramite il motore vero', async () => {
-    const { events } = await collect(120_000);
+    const { sensore: events } = await collect(120_000);
     expect(events).toHaveLength(2);
 
     const now = events[1]!.ts;
@@ -268,6 +275,59 @@ describe('rilevamento e conferma', () => {
     expect(dopoUno[0]!.reporters).toBe(1);
     expect(dopoDue[0]!.reporters).toBe(2);
     expect(dopoDue[0]!.confidence).toBeGreaterThan(dopoUno[0]!.confidence);
+  });
+});
+
+describe('segnalazione vocale di un veicolo simulato', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  async function collectAll(ms: number) {
+    const traffic = new DemoTrafficProvider();
+    const events: RoadEvent[] = [];
+    traffic.start({ onEvent: (e) => events.push(e) });
+    await vi.advanceTimersByTimeAsync(ms);
+    traffic.stop();
+    return events.filter((e) => e.source === 'voice');
+  }
+
+  it('la frase attraversa il parser vero e produce il pericolo giusto', async () => {
+    const vocali = await collectAll(180_000);
+    expect(vocali.length).toBeGreaterThan(0);
+    const primo = vocali[0]!;
+    expect(primo.hazard).toBe('broken_down_vehicle');
+    expect(primo.lane).toBe('second_lane');
+    expect(primo.state).toBe('broken_down');
+    expect(primo.type).toBe('vehicle');
+    expect(primo.demo).toBe(true);
+  });
+
+  it('una sola voce NON basta: serve la conferma del secondo veicolo', async () => {
+    const vocali = await collectAll(180_000);
+    expect(vocali.length).toBeGreaterThanOrEqual(2);
+    const now = vocali[1]!.ts;
+    const conUna = buildClusters([vocali[0]!], now)[0]!;
+    const conDue = buildClusters(vocali.slice(0, 2), now)[0]!;
+
+    expect(conUna.reporters).toBe(1);
+    expect(conUna.confidence).toBeLessThan(ALERT.minConfidence);
+    expect(conDue.reporters).toBe(2);
+    expect(conDue.confidence).toBeGreaterThan(conUna.confidence);
+  });
+
+  it('la trascrizione resta sul dispositivo: il backend la scarta', async () => {
+    const vocali = await collectAll(180_000);
+    const primo = vocali[0]!;
+    expect(primo.rawTranscript).toBeTruthy();
+    const senzaDemo: Partial<RoadEvent> = { ...primo };
+    delete senzaDemo.demo;
+    const r = validateEvent(senzaDemo, primo.ts);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value).not.toHaveProperty('rawTranscript');
+      expect(r.value).not.toHaveProperty('hazard');
+      expect(r.value).not.toHaveProperty('lane');
+    }
   });
 });
 
