@@ -56,6 +56,20 @@ export class SensorEngine {
   private lastGeo: GeoSample | null = null;
   private lastGeoAt = 0;
 
+  /**
+   * Un campione di movimento UTILIZZABILE e' davvero arrivato.
+   * E' diverso da "l'API esiste": su desktop, e su telefoni privi di
+   * accelerometro, `DeviceMotionEvent` e' definito ma l'evento non arriva mai.
+   */
+  private motionSeen = false;
+  /** Idem per il giroscopio: `rotationRate` valorizzato almeno una volta. */
+  private rotationSeen = false;
+  /** Scaduto il quale, senza dati, i sensori si dichiarano assenti. */
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  private graceElapsed = false;
+  /** L'accesso alla posizione e' stato negato dall'utente. */
+  private geoDenied = false;
+
   /** Finestra scorrevole dei campioni verticali, usata per il rumore di fondo. */
   private ring: RingEntry[] = [];
   private sumSq = 0;
@@ -104,10 +118,27 @@ export class SensorEngine {
     await this.provider.start({
       onMotion: (s) => this.handleMotion(s),
       onGeo: (g) => this.handleGeo(g),
-      onError: (e) => this.handlers.onError?.(e),
+      onError: (e) => {
+        // Lo stato della posizione vive qui, non nel chiamante: cosi' non
+        // puo' essere sovrascritto da un aggiornamento successivo.
+        if (e.kind === 'geolocation' && e.denied) {
+          this.geoDenied = true;
+          this.emitStatus();
+        }
+        this.handlers.onError?.(e);
+      },
     });
 
     this.running = true;
+    // Finestra di cortesia: entro questo tempo deve arrivare un campione
+    // reale, altrimenti l'indicatore dice che i sensori non ci sono.
+    this.geoDenied = false;
+    this.graceElapsed = false;
+    this.graceTimer = setTimeout(() => {
+      this.graceElapsed = true;
+      this.emitStatus();
+    }, SENSORS.motionGraceMs);
+
     this.emitStatus();
     return this.caps;
   }
@@ -119,7 +150,18 @@ export class SensorEngine {
     this.ring = [];
     this.sumSq = 0;
     this.lastGeo = null;
+    if (this.graceTimer) clearTimeout(this.graceTimer);
+    this.graceTimer = null;
+    this.graceElapsed = false;
+    this.geoDenied = false;
+    this.motionSeen = false;
+    this.rotationSeen = false;
     this.handlers = {};
+  }
+
+  /** true se sono arrivati campioni di movimento realmente utilizzabili. */
+  hasMotionData(): boolean {
+    return this.motionSeen;
   }
 
   // -- interni --------------------------------------------------------------
@@ -132,6 +174,20 @@ export class SensorEngine {
   }
 
   private handleMotion(sample: SensorSample): void {
+    // Lo stato viene ricalcolato solo sulle TRANSIZIONI, mai a ogni campione:
+    // a 50 Hz aggiornare la interfaccia ogni volta sarebbe uno spreco.
+    const usable =
+      (sample.verticalAccel !== null && Number.isFinite(sample.verticalAccel)) ||
+      (sample.totalAccel !== null && Number.isFinite(sample.totalAccel));
+    if (usable && !this.motionSeen) {
+      this.motionSeen = true;
+      this.emitStatus();
+    }
+    if (!this.rotationSeen && sample.rotationRate !== null && Number.isFinite(sample.rotationRate)) {
+      this.rotationSeen = true;
+      this.emitStatus();
+    }
+
     const v = sample.verticalAccel;
 
     // Il rumore di fondo va misurato PRIMA di inserire il campione corrente,
@@ -169,6 +225,20 @@ export class SensorEngine {
     if (this.sumSq < 0) this.sumSq = 0; // guardia contro derive numeriche
   }
 
+  /**
+   * Stato dei sensori di movimento, basato su cio' che ARRIVA DAVVERO e non
+   * sull'esistenza dell'API.
+   *
+   *   off     nessun permesso, oppure nessun dato entro la finestra di attesa
+   *   partial dati in arrivo ma senza giroscopio, oppure attesa in corso
+   *   ok      accelerometro e giroscopio entrambi attivi
+   */
+  private sensorStatus(): SystemStatus['sensors'] {
+    if (!this.caps?.accelerometer) return 'off';
+    if (!this.motionSeen) return this.graceElapsed ? 'off' : 'partial';
+    return this.rotationSeen ? 'ok' : 'partial';
+  }
+
   /** RMS dell'accelerazione verticale sulla finestra corrente. */
   private currentRms(): number {
     if (this.ring.length === 0) return 0;
@@ -177,15 +247,11 @@ export class SensorEngine {
 
   private emitStatus(): void {
     const geo = this.lastGeo;
-    let gps: SystemStatus['gps'] = 'off';
+    let gps: SystemStatus['gps'] = this.geoDenied ? 'denied' : 'off';
     if (geo) {
       gps = geo.accuracyM !== null && geo.accuracyM > SENSORS.weakAccuracyM ? 'weak' : 'ok';
     }
 
-    let sensors: SystemStatus['sensors'] = 'off';
-    if (this.caps?.accelerometer && this.caps?.gyroscope) sensors = 'ok';
-    else if (this.caps?.accelerometer) sensors = 'partial';
-
-    this.handlers.onStatus?.(gps, sensors);
+    this.handlers.onStatus?.(gps, this.sensorStatus());
   }
 }

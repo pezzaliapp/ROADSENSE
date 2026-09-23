@@ -10,18 +10,39 @@ import type { ActiveAlert } from '../core/AlertEngine';
 import { EVENT_META } from './eventMeta';
 import { confidenceLevel } from '../core/ConfidenceEngine';
 
+/**
+ * Da dove arrivano i rilevamenti che compongono la zona.
+ *
+ *   demo     veicoli simulati, dentro uno scenario dichiarato tale
+ *   local    solo questo dispositivo: non esiste ancora alcuna rete
+ *   network  piu' dispositivi, attraverso il backend collaborativo
+ */
+export type AlertSource = 'demo' | 'local' | 'network';
+
 interface Props {
   alert: ActiveAlert | null;
-  /**
-   * In DEMO MODE le segnalazioni provengono da veicoli simulati, e va detto:
-   * "segnalazioni" farebbe pensare a persone reali dietro a una rete che non
-   * esiste ancora.
-   */
-  demo?: boolean;
+  source: AlertSource;
   onDismiss: () => void;
 }
 
-export function AlertBanner({ alert, demo = false, onDismiss }: Props) {
+/**
+ * Descrizione onesta di chi ha rilevato.
+ *
+ * Finche' il backend non esiste, "segnalazioni" farebbe credere che dietro ci
+ * siano altre persone: in beta i rilevamenti sono tutti del dispositivo su
+ * cui si sta guidando, e va detto senza ambiguita'.
+ */
+function reportersLabel(count: number, source: AlertSource): string {
+  if (source === 'demo') {
+    return `${count} ${count === 1 ? 'VEICOLO' : 'VEICOLI'} ROAD SENSE · SIMULATO`;
+  }
+  if (source === 'local') {
+    return `${count} ${count === 1 ? 'RILEVAMENTO' : 'RILEVAMENTI'} · QUESTO DISPOSITIVO`;
+  }
+  return `${count} ${count === 1 ? 'SEGNALAZIONE' : 'SEGNALAZIONI'}`;
+}
+
+export function AlertBanner({ alert, source, onDismiss }: Props) {
   if (!alert) return null;
   const meta = EVENT_META[alert.cluster.type];
   const level = confidenceLevel(alert.cluster.confidence);
@@ -46,15 +67,8 @@ export function AlertBanner({ alert, demo = false, onDismiss }: Props) {
           {prefix ? meta.label.toLowerCase() : meta.label} tra {formatDistance(alert.distanceM)}
         </div>
         <div className="a-sub">
-          {demo
-            ? `${alert.cluster.reporters} ${
-                alert.cluster.reporters === 1 ? 'VEICOLO' : 'VEICOLI'
-              } ROAD SENSE · SIMULATO`
-            : `${alert.cluster.reporters} ${
-                alert.cluster.reporters === 1 ? 'SEGNALAZIONE' : 'SEGNALAZIONI'
-              }`}
-          {' · '}
-          AFFIDABILITA' {Math.round(alert.cluster.confidence * 100)}%
+          {reportersLabel(alert.cluster.reporters, source)} · AFFIDABILITA'{' '}
+          {Math.round(alert.cluster.confidence * 100)}%
         </div>
       </div>
     </div>

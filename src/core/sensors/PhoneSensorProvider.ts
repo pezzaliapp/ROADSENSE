@@ -40,6 +40,28 @@ function motionPermissionApi(): MotionPermissionApi | null {
   return DeviceMotionEvent as unknown as MotionPermissionApi;
 }
 
+/**
+ * Avvia la richiesta del permesso ai sensori di movimento e ne restituisce la
+ * promessa, SENZA attendere.
+ *
+ * La distinzione e' tutto: iOS concede `DeviceMotionEvent.requestPermission()`
+ * solo mentre l'attivazione utente e' ancora valida, e un `await` intermedio
+ * la fa scadere. Questa funzione e' sincrona proprio per poter essere invocata
+ * nella stessa esecuzione del tocco su START.
+ *
+ * Su Android e desktop l'API non esiste: si restituisce `null` e non cambia
+ * nulla. Nessun ramo specifico per piattaforma, nessun doppio percorso.
+ */
+function beginMotionPermissionRequest(): Promise<'granted' | 'denied' | 'default'> | null {
+  const api = motionPermissionApi();
+  if (typeof api?.requestPermission !== 'function') return null;
+  try {
+    return api.requestPermission();
+  } catch {
+    return null;
+  }
+}
+
 export class PhoneSensorProvider implements SensorProvider {
   readonly id = 'phone';
   readonly label = 'Sensori telefono';
@@ -81,23 +103,28 @@ export class PhoneSensorProvider implements SensorProvider {
   }
 
   async requestPermissions(): Promise<SensorCapabilities> {
+    // PRIMA RIGA, e deve restare tale: nessun `await` puo' precederla.
+    // Tutta la catena dal tocco su START fino a qui e' sincrona, quindi su
+    // iOS l'attivazione utente e' ancora valida. Spostare questa chiamata
+    // dopo un await la farebbe fallire con NotAllowedError, e sugli iPhone
+    // il rilevamento automatico non partirebbe mai.
+    const permission = beginMotionPermissionRequest();
+
     await this.probe();
-    const api = motionPermissionApi();
-    if (typeof api?.requestPermission === 'function') {
+
+    if (permission) {
       try {
-        const result = await api.requestPermission();
-        const granted = result === 'granted';
+        const granted = (await permission) === 'granted';
         this.caps = { ...this.caps, accelerometer: granted, gyroscope: granted };
-        if (!granted) {
-          this.handlers.onError?.({
-            kind: 'permission',
-            message: 'Accesso ai sensori di movimento negato: resta attiva la segnalazione manuale.',
-          });
-        }
       } catch {
         this.caps = { ...this.caps, accelerometer: false, gyroscope: false };
       }
     }
+
+    // L'esito viene comunicato al chiamante attraverso `caps`, non con un
+    // callback: qui gli handler non sono ancora stati assegnati - lo saranno
+    // in `start()` - e una segnalazione da questo punto non arriverebbe a
+    // nessuno. La gestione sta in un solo posto, in App.
     return this.caps;
   }
 
@@ -116,12 +143,11 @@ export class PhoneSensorProvider implements SensorProvider {
       this.watchId = navigator.geolocation.watchPosition(
         (pos) => this.handlePosition(pos),
         (err) => {
+          const denied = err.code === err.PERMISSION_DENIED;
           this.handlers.onError?.({
             kind: 'geolocation',
-            message:
-              err.code === err.PERMISSION_DENIED
-                ? 'Accesso alla posizione negato.'
-                : 'Posizione non disponibile.',
+            denied,
+            message: denied ? 'Accesso alla posizione negato.' : 'Posizione non disponibile.',
           });
         },
         { ...SENSORS.geo },

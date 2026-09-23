@@ -9,7 +9,12 @@ import type { EventType } from '../core/types';
 
 export const APP = {
   name: 'ROAD SENSE',
-  version: '0.1.0',
+  /**
+   * Versione dichiarata in package.json, iniettata dalla build.
+   * E' l'unico punto da aggiornare per una release: la stessa costante
+   * finisce anche nel service worker.
+   */
+  version: __APP_VERSION__,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -40,6 +45,15 @@ export const SENSORS = {
     maximumAge: 1000,
     timeout: 15000,
   },
+  /**
+   * Quanto si attende, dopo START, un primo campione di movimento reale prima
+   * di dichiarare i sensori assenti, ms.
+   *
+   * Serve perche' l'esistenza di `DeviceMotionEvent` non significa che ci sia
+   * un accelerometro: su desktop, e su telefoni che non lo espongono, l'evento
+   * non arriva mai. Meglio dirlo che mostrare un indicatore verde falso.
+   */
+  motionGraceMs: 4000,
   /** Sopra questa precisione (m) la posizione e' considerata debole. */
   weakAccuracyM: 35,
   /** Sopra questa precisione (m) la posizione non e' usabile per un evento. */

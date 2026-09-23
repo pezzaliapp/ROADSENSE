@@ -21,6 +21,12 @@ export interface SensorProviderError {
   /** Sottosistema coinvolto. */
   kind: 'geolocation' | 'motion' | 'permission' | 'unsupported';
   message: string;
+  /**
+   * true quando la causa e' un permesso NEGATO, non un dato assente.
+   * E' una distinzione che conta per chi guarda lo schermo: "non c'e'
+   * segnale" e "hai detto di no" richiedono reazioni diverse.
+   */
+  denied?: boolean;
 }
 
 /**

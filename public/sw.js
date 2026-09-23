@@ -28,7 +28,10 @@
  * E' documentato nel README, non nascosto.
  */
 
-const VERSION = 'v0.1.1';
+// Sostituita al momento della build con la versione di package.json:
+// un solo punto da aggiornare per una release, nessuna divergenza possibile
+// fra versione dell'app e nome delle cache.
+const VERSION = '__APP_VERSION__';
 const SHELL_CACHE = `roadsense-shell-${VERSION}`;
 const ASSET_CACHE = `roadsense-assets-${VERSION}`;
 

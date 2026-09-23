@@ -451,6 +451,17 @@ button {
 /* Etichetta permanente: i dati meteo mostrati sono simulati.
    Ora e' una riga della legenda della demo, qui sopra. */
 
+/* Riga di spiegazione mostrata solo a monitoraggio fermo. */
+.intro {
+  margin: 0;
+  padding: 8px 14px 2px;
+  background: var(--panel);
+  color: #8b97a5;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+}
+
 /* ---------- barra comandi ---------- */
 
 .controls {

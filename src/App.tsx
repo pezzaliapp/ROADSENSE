@@ -430,19 +430,23 @@ export default function App() {
       onSample: handleSample,
       onGeo: handleGeo,
       onStatus: (gps, sensors) => setStatus((s) => ({ ...s, gps, sensors })),
-      onError: (err) => {
-        if (err.kind === 'geolocation' || err.kind === 'permission') {
-          setStatus((s) => ({ ...s, gps: err.kind === 'geolocation' ? 'denied' : s.gps }));
-        }
-        showToast(err.message);
-      },
+      // Lo stato degli indicatori arriva da `onStatus`, che e' l'unica
+      // fonte: qui si mostra solo il messaggio a chi guarda.
+      onError: (err) => showToast(err.message),
     });
 
     setFollow(true);
     setRunning(true);
 
+    // Unico punto in cui si comunica l'esito dei permessi di movimento.
+    // Il provider non segnala nulla da solo: quando li richiede, i suoi
+    // handler non sono ancora stati assegnati.
     if (!caps.accelerometer) {
-      showToast('Sensori di movimento non disponibili: resta attiva la segnalazione manuale.');
+      showToast(
+        caps.needsMotionPermission
+          ? 'Accesso ai sensori di movimento negato: resta attiva la segnalazione manuale.'
+          : 'Sensori di movimento non disponibili: resta attiva la segnalazione manuale.',
+      );
     }
   }, [handleGeo, handleSample, showToast]);
 
@@ -584,7 +588,7 @@ export default function App() {
         />
         <AlertBanner
           alert={alert}
-          demo={demo}
+          source={demo ? 'demo' : backendEnabled() ? 'network' : 'local'}
           onDismiss={() => {
             roadAlertRef.current = null;
             setAlert(null);
@@ -621,6 +625,16 @@ export default function App() {
         )}
         {toast && <div className="toast">{toast}</div>}
       </div>
+
+      {/* Una riga sola, e solo quando serve: prima di partire, in modalita'
+          reale. Sparisce appena il monitoraggio e' attivo, perche' guidando
+          non si legge. Nessun wizard, nessuna schermata introduttiva. */}
+      {!demo && !running && (
+        <p className="intro">
+          ROAD SENSE usa posizione e sensori del telefono per rilevare irregolarita' della
+          strada. In questa beta i dati restano sul dispositivo.
+        </p>
+      )}
 
       <div className="statusline">
         <span>
