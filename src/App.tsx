@@ -35,6 +35,13 @@ import {
 } from './voice/BrowserVoiceProvider';
 import { DemoVoiceProvider } from './voice/DemoVoiceProvider';
 import type { VoiceDiagnostics, VoiceProvider, VoiceStatus } from './voice/VoiceProvider';
+import {
+  browserMicEnvironment,
+  type MicPermission,
+  micMessage,
+  readMicPermission,
+  requestMicrophone,
+} from './voice/micPermission';
 import { parseVoiceReport } from './voice/parser';
 import { buildVoiceEvent } from './voice/voiceEvent';
 import { HAZARD_META } from './hazard/taxonomy';
@@ -148,34 +155,25 @@ export default function App() {
   );
 
   /**
-   * Chiede il permesso del microfono DENTRO il tocco dell'utente.
+   * Cio' che il browser dichiara sul microfono, letto senza chiedere nulla.
    *
-   * Perche' serve: il riconoscimento viene avviato da un effetto che reagisce
-   * a START, quindi fuori dal gesto. Chrome per Android concede il microfono
-   * solo su interazione: chiesto dall'effetto puo' tornare `not-allowed` senza
-   * nemmeno mostrare la richiesta. Ottenuto qui, il permesso e' gia' valido
-   * quando il riconoscimento parte davvero.
-   *
-   * Il flusso audio viene chiuso immediatamente: serviva il permesso, non
-   * l'audio. Niente viene registrato, trattenuto o inviato.
+   * Serve PRIMA del tocco, non dopo: e' l'unico modo di distinguere "ha appena
+   * rifiutato" da "era gia' bloccato". Vive anche in un ref perche' al momento
+   * del tocco va letto senza aspettare un re-render.
    */
-  const primeMicrophone = useCallback(async (): Promise<
-    'permesso' | 'negato' | 'sconosciuto'
-  > => {
-    const media = navigator.mediaDevices as
-      | { getUserMedia?: (c: MediaStreamConstraints) => Promise<MediaStream> }
-      | undefined;
-    if (typeof media?.getUserMedia !== 'function') return 'sconosciuto';
-    try {
-      const stream = await media.getUserMedia({ audio: true });
-      for (const track of stream.getTracks()) track.stop();
-      pushDiagnostics({ mic: 'permesso' });
-      return 'permesso';
-    } catch {
-      pushDiagnostics({ mic: 'negato' });
-      return 'negato';
-    }
-  }, [pushDiagnostics]);
+  const micPermissionRef = useRef<MicPermission>('sconosciuto');
+  /**
+   * Il microfono e' bloccato dal browser: e' l'unico caso in cui ha senso
+   * parlare di impostazioni del sito, e va detto in modo che resti leggibile.
+   */
+  const [micBlocked, setMicBlocked] = useState(false);
+  const rememberMic = useCallback(
+    (value: MicPermission) => {
+      micPermissionRef.current = value;
+      pushDiagnostics({ mic: value });
+    },
+    [pushDiagnostics],
+  );
 
   const reducedMotion = useReducedMotion();
   const { updateReady, applyUpdate } = usePwaUpdate();
@@ -622,31 +620,24 @@ export default function App() {
   useEffect(() => {
     if (!voiceDebug) return;
     pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() });
-    // Il permesso del microfono si puo' leggere senza chiederlo, dove il
-    // browser lo consente. Non apre il microfono e non registra nulla.
-    const permissions = navigator.permissions as
-      | { query?: (d: { name: string }) => Promise<{ state: string }> }
-      | undefined;
-    if (typeof permissions?.query !== 'function') return;
+  }, [voiceDebug, pushDiagnostics, voiceEnabled, running]);
+
+  /**
+   * Lettura passiva del permesso del microfono, sempre attiva.
+   *
+   * Non e' diagnostica: e' cio' che permette di distinguere un rifiuto appena
+   * dato da un blocco preesistente. Non apre il microfono, non mostra nessuna
+   * finestra, non registra niente.
+   */
+  useEffect(() => {
     let cancelled = false;
-    void permissions
-      .query({ name: 'microphone' })
-      .then((result) => {
-        if (cancelled) return;
-        pushDiagnostics({
-          mic:
-            result.state === 'granted'
-              ? 'permesso'
-              : result.state === 'denied'
-                ? 'negato'
-                : 'sconosciuto',
-        });
-      })
-      .catch(() => undefined);
+    void readMicPermission(browserMicEnvironment()).then((value) => {
+      if (!cancelled) rememberMic(value);
+    });
     return () => {
       cancelled = true;
     };
-  }, [voiceDebug, pushDiagnostics, voiceEnabled, running]);
+  }, [rememberMic, voiceEnabled, running]);
 
   /**
    * Stato della voce a monitoraggio fermo.
@@ -689,32 +680,49 @@ export default function App() {
       return;
     }
 
+    // Verifica del supporto: sincrona, non cede il controllo al browser.
     if (!new BrowserVoiceProvider().capabilities().supported) return;
 
-    // Verifica REALE dell'elaborazione locale. La sola presenza dell'opzione
+    // PRIMA COSA, e senza nessun await prima: la finestra nativa del
+    // microfono. Deve aprirsi dentro l'attivazione di QUESTO tocco. Qualunque
+    // attesa messa sopra questa riga - anche una sola - fa decadere il gesto
+    // e Android rifiuta senza mostrare niente: e' esattamente cio' che
+    // accadeva sul Fold, dove la verifica del motore locale veniva prima.
+    const mic = await requestMicrophone(browserMicEnvironment(), micPermissionRef.current);
+    rememberMic(mic.permission);
+    setMicBlocked(mic.outcome === 'bloccato');
+
+    if (mic.outcome !== 'permesso' && mic.outcome !== 'sconosciuto') {
+      // 'bloccato' e' l'UNICO caso in cui si parla di impostazioni del sito.
+      // Un rifiuto appena dato si risolve toccando di nuovo VOCE.
+      if (mic.outcome === 'bloccato') setStatus((st) => ({ ...st, voice: 'denied' }));
+      const message = micMessage(mic.outcome);
+      if (message) showToast(message);
+      return;
+    }
+
+    // Solo ora, con il microfono concesso, ha senso chiedersi DOVE verra'
+    // elaborato l'audio. La verifica e' reale: la sola presenza dell'opzione
     // `processLocally` non dice nulla sul fatto che il modello italiano sia
-    // installato: darlo per scontato e' cio' che impediva alla voce di
-    // partire su Chrome per Android.
+    // installato sul telefono.
     const onDevice = await probeOnDevice();
     pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() });
 
-    const enable = async (remote: boolean) => {
-      const mic = await primeMicrophone();
-      if (mic === 'negato') {
-        setStatus((s) => ({ ...s, voice: 'denied' }));
-        showToast('Microfono negato. Autorizzalo nelle impostazioni del browser per questo sito.');
-        return;
-      }
+    if (onDevice) {
+      // Elaborazione sul dispositivo: non c'e' nulla da autorizzare oltre al
+      // microfono, l'audio non esce di qui.
       setVoiceEnabled(true);
-      if (remote) {
-        showToast(
-          "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
-        );
-      }
-    };
+      return;
+    }
 
-    if (onDevice || voiceConsent === 'granted') {
-      await enable(!onDevice);
+    // Da qui in poi si parla di una cosa DIVERSA dal microfono: mandare
+    // l'audio a un servizio esterno del browser. E' un secondo consenso, e
+    // resta separato.
+    if (voiceConsent === 'granted') {
+      setVoiceEnabled(true);
+      showToast(
+        "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
+      );
       return;
     }
 
@@ -726,10 +734,13 @@ export default function App() {
       return;
     }
 
-    // Secondo tocco: consenso dato.
+    // Secondo tocco: consenso all'elaborazione remota dato.
     setVoiceConsent('granted');
-    await enable(true);
-  }, [voiceEnabled, demo, voiceConsent, showToast, primeMicrophone, pushDiagnostics]);
+    setVoiceEnabled(true);
+    showToast(
+      "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
+    );
+  }, [voiceEnabled, demo, voiceConsent, showToast, rememberMic, pushDiagnostics]);
 
   // -- START / STOP ---------------------------------------------------------
   const start = useCallback(async () => {
@@ -888,6 +899,16 @@ export default function App() {
         <div className="update-bar">
           <span>Aggiornamento disponibile</span>
           <button onClick={applyUpdate}>AGGIORNA</button>
+        </div>
+      )}
+
+      {/* Microfono bloccato dal browser: e' l'unico caso in cui le
+          impostazioni del sito sono davvero l'unica via. Un rifiuto appena
+          dato NON arriva qui: si risolve toccando di nuovo VOCE. */}
+      {micBlocked && !demo && (
+        <div className="mic-bar" role="alert">
+          <strong>MICROFONO BLOCCATO.</strong> Riattivalo nelle impostazioni del sito, poi tocca di
+          nuovo VOCE.
         </div>
       )}
 

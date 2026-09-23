@@ -763,3 +763,14 @@ button {
   color: var(--muted);
   font-size: 10.5px;
 }
+
+/* Microfono bloccato: unico caso in cui si rimanda alle impostazioni. */
+.mic-bar {
+  padding: 9px 14px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.mic-bar strong { font-weight: 800; }
