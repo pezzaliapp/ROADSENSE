@@ -221,10 +221,12 @@ describe('N1 - lo stato SENSORI riflette i dati, non l\'esistenza dell\'API', ()
     const engine = code('src', 'core', 'SensorEngine.ts');
     expect(engine).toMatch(/private geoDenied = false;/);
     expect(engine).toMatch(/this\.geoDenied \? 'denied' : 'off'/);
-    // App non deve piu' dedurre da sola lo stato "negato": lo riceve.
-    // Il reset a 'off' allo stop resta legittimo e non viene toccato.
+    // App non deve piu' dedurre da sola lo stato "negato" DELLA POSIZIONE:
+    // lo riceve dal motore. Il reset a 'off' allo stop resta legittimo.
+    // La guardia e' mirata al GPS: altri indicatori (la voce) hanno un proprio
+    // "negato" che nasce dal loro permesso, non da questo.
     const app = code('src', 'App.tsx');
-    expect(app).not.toMatch(/'denied'/);
+    expect(app).not.toMatch(/gps:\s*'denied'/);
   });
 
   it('l\'app prosegue comunque: GPS e segnalazione manuale restano', async () => {

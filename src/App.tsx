@@ -27,9 +27,14 @@ import { DemoSensorProvider } from './core/sensors/DemoSensorProvider';
 import { DEMO_ROUTE } from './demo/demoRoute';
 import { DEMO_ROUTE_CENTER } from './demo/demoRoute';
 import { DemoTrafficProvider } from './demo/DemoTrafficProvider';
-import { BrowserVoiceProvider } from './voice/BrowserVoiceProvider';
+import {
+  BrowserVoiceProvider,
+  onDeviceStateNow,
+  probeOnDevice,
+  selectedVoiceApi,
+} from './voice/BrowserVoiceProvider';
 import { DemoVoiceProvider } from './voice/DemoVoiceProvider';
-import type { VoiceProvider, VoiceStatus } from './voice/VoiceProvider';
+import type { VoiceDiagnostics, VoiceProvider, VoiceStatus } from './voice/VoiceProvider';
 import { parseVoiceReport } from './voice/parser';
 import { buildVoiceEvent } from './voice/voiceEvent';
 import { HAZARD_META } from './hazard/taxonomy';
@@ -58,10 +63,20 @@ import { StatusBar } from './ui/StatusBar';
 import { usePwaUpdate } from './ui/usePwaUpdate';
 import { useReducedMotion } from './ui/useReducedMotion';
 import { useWakeLock } from './ui/useWakeLock';
+import { VoiceDebugPanel } from './ui/VoiceDebugPanel';
 
 function isDemoRequested(): boolean {
   if (typeof window === 'undefined') return false;
   return new URLSearchParams(window.location.search).get('demo') === '1';
+}
+
+/**
+ * DEBUG VOCE: solo su richiesta esplicita nell'indirizzo, mai per errore.
+ * Senza questo parametro il pannello non viene nemmeno costruito.
+ */
+function isVoiceDebugRequested(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get('debugVoice') === '1';
 }
 
 export default function App() {
@@ -108,6 +123,59 @@ export default function App() {
    * non ereditato da una decisione presa settimane prima.
    */
   const [voiceConsent, setVoiceConsent] = useState<'none' | 'pending' | 'granted'>('none');
+
+  /**
+   * Diagnosi della catena vocale. Esiste solo con ?debugVoice=1 e non lascia
+   * mai il dispositivo. Nell'interfaccia normale non viene mostrata.
+   */
+  const [voiceDebug] = useState(isVoiceDebugRequested);
+  const [diagnostics, setDiagnostics] = useState<VoiceDiagnostics>(() => ({
+    api: 'assente',
+    mic: 'sconosciuto',
+    phase: 'idle',
+    local: 'non disponibile',
+    remote: false,
+    lastError: null,
+    lastPhrase: null,
+  }));
+  const pushDiagnostics = useCallback(
+    (patch: Partial<VoiceDiagnostics>) => {
+      // Fuori dal debug non si raccoglie nulla: nemmeno in memoria.
+      if (!voiceDebug) return;
+      setDiagnostics((d) => ({ ...d, ...patch }));
+    },
+    [voiceDebug],
+  );
+
+  /**
+   * Chiede il permesso del microfono DENTRO il tocco dell'utente.
+   *
+   * Perche' serve: il riconoscimento viene avviato da un effetto che reagisce
+   * a START, quindi fuori dal gesto. Chrome per Android concede il microfono
+   * solo su interazione: chiesto dall'effetto puo' tornare `not-allowed` senza
+   * nemmeno mostrare la richiesta. Ottenuto qui, il permesso e' gia' valido
+   * quando il riconoscimento parte davvero.
+   *
+   * Il flusso audio viene chiuso immediatamente: serviva il permesso, non
+   * l'audio. Niente viene registrato, trattenuto o inviato.
+   */
+  const primeMicrophone = useCallback(async (): Promise<
+    'permesso' | 'negato' | 'sconosciuto'
+  > => {
+    const media = navigator.mediaDevices as
+      | { getUserMedia?: (c: MediaStreamConstraints) => Promise<MediaStream> }
+      | undefined;
+    if (typeof media?.getUserMedia !== 'function') return 'sconosciuto';
+    try {
+      const stream = await media.getUserMedia({ audio: true });
+      for (const track of stream.getTracks()) track.stop();
+      pushDiagnostics({ mic: 'permesso' });
+      return 'permesso';
+    } catch {
+      pushDiagnostics({ mic: 'negato' });
+      return 'negato';
+    }
+  }, [pushDiagnostics]);
 
   const reducedMotion = useReducedMotion();
   const { updateReady, applyUpdate } = usePwaUpdate();
@@ -536,13 +604,49 @@ export default function App() {
     provider.start({
       onTranscript: handleTranscript,
       onStatus: (voice: VoiceStatus) => setStatus((s) => ({ ...s, voice })),
+      // Raccolta solo quando il pannello e' aperto: a regime non esiste.
+      ...(voiceDebug ? { onDiagnostics: pushDiagnostics } : {}),
     });
 
     return () => {
       provider.stop();
       voiceRef.current = null;
     };
-  }, [running, voiceEnabled, demo, voiceConsent, handleTranscript]);
+  }, [running, voiceEnabled, demo, voiceConsent, handleTranscript, voiceDebug, pushDiagnostics]);
+
+  /**
+   * Fotografia iniziale della catena, con ?debugVoice=1.
+   * Serve a vedere COSA offre il browser prima ancora di premere START: e' il
+   * primo dato utile quando la voce non parte su un telefono specifico.
+   */
+  useEffect(() => {
+    if (!voiceDebug) return;
+    pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() });
+    // Il permesso del microfono si puo' leggere senza chiederlo, dove il
+    // browser lo consente. Non apre il microfono e non registra nulla.
+    const permissions = navigator.permissions as
+      | { query?: (d: { name: string }) => Promise<{ state: string }> }
+      | undefined;
+    if (typeof permissions?.query !== 'function') return;
+    let cancelled = false;
+    void permissions
+      .query({ name: 'microphone' })
+      .then((result) => {
+        if (cancelled) return;
+        pushDiagnostics({
+          mic:
+            result.state === 'granted'
+              ? 'permesso'
+              : result.state === 'denied'
+                ? 'negato'
+                : 'sconosciuto',
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [voiceDebug, pushDiagnostics, voiceEnabled, running]);
 
   /**
    * Stato della voce a monitoraggio fermo.
@@ -572,7 +676,7 @@ export default function App() {
    * di partire - e l'indicatore mostra "VOCE ?" invece di dichiarare
    * un'attivazione che non c'e' stata.
    */
-  const toggleVoice = useCallback(() => {
+  const toggleVoice = useCallback(async () => {
     if (voiceEnabled) {
       setVoiceEnabled(false);
       return;
@@ -585,16 +689,32 @@ export default function App() {
       return;
     }
 
-    const caps = new BrowserVoiceProvider().capabilities();
-    if (!caps.supported) return;
+    if (!new BrowserVoiceProvider().capabilities().supported) return;
 
-    if (caps.onDevice || voiceConsent === 'granted') {
+    // Verifica REALE dell'elaborazione locale. La sola presenza dell'opzione
+    // `processLocally` non dice nulla sul fatto che il modello italiano sia
+    // installato: darlo per scontato e' cio' che impediva alla voce di
+    // partire su Chrome per Android.
+    const onDevice = await probeOnDevice();
+    pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() });
+
+    const enable = async (remote: boolean) => {
+      const mic = await primeMicrophone();
+      if (mic === 'negato') {
+        setStatus((s) => ({ ...s, voice: 'denied' }));
+        showToast('Microfono negato. Autorizzalo nelle impostazioni del browser per questo sito.');
+        return;
+      }
       setVoiceEnabled(true);
-      if (!caps.onDevice) {
+      if (remote) {
         showToast(
           "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
         );
       }
+    };
+
+    if (onDevice || voiceConsent === 'granted') {
+      await enable(!onDevice);
       return;
     }
 
@@ -608,11 +728,8 @@ export default function App() {
 
     // Secondo tocco: consenso dato.
     setVoiceConsent('granted');
-    setVoiceEnabled(true);
-    showToast(
-      "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
-    );
-  }, [voiceEnabled, demo, voiceConsent, showToast]);
+    await enable(true);
+  }, [voiceEnabled, demo, voiceConsent, showToast, primeMicrophone, pushDiagnostics]);
 
   // -- START / STOP ---------------------------------------------------------
   const start = useCallback(async () => {
@@ -773,6 +890,19 @@ export default function App() {
           <button onClick={applyUpdate}>AGGIORNA</button>
         </div>
       )}
+
+      {/* Il secondo tocco non puo' dipendere da un messaggio che sparisce:
+          finche' il consenso manca, la richiesta resta scritta sullo schermo. */}
+      {voiceConsent === 'pending' && !demo && (
+        <div className="consent-bar" role="alert">
+          <strong>SERVE UN SECONDO TOCCO.</strong> Questo browser non elabora la voce sul
+          dispositivo: l'audio verrebbe inviato a un servizio esterno del browser. Tocca di nuovo
+          VOCE per accettare.
+        </div>
+      )}
+
+      {/* Diagnosi: esiste solo con ?debugVoice=1. */}
+      {voiceDebug && <VoiceDebugPanel diagnostics={diagnostics} />}
 
       <div className="map-wrap">
         <MapView

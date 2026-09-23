@@ -42,10 +42,58 @@ export interface VoiceCapabilities {
   onDevice: boolean;
 }
 
+/** Quale costruttore e' stato realmente scelto dal browser. */
+export type VoiceApiName = 'SpeechRecognition' | 'webkitSpeechRecognition' | 'assente';
+
+/** Permesso del microfono, per quel che il browser accetta di dichiarare. */
+export type VoiceMicState = 'permesso' | 'negato' | 'sconosciuto';
+
+/**
+ * Dove avviene l'elaborazione.
+ * 'non disponibile' significa "il browser non permette di saperlo o non offre
+ * l'opzione": e' diverso da 'no', che e' una risposta negativa esplicita.
+ */
+export type VoiceLocalState = 'si' | 'no' | 'non disponibile';
+
+/**
+ * Punto esatto della catena in cui si trova il riconoscimento.
+ * Non e' lo stesso di `VoiceStatus`: quello dice all'utente se la voce
+ * funziona, questo serve a capire DOVE si e' fermata.
+ */
+export type VoicePhase =
+  | 'idle'
+  | 'starting'
+  | 'listening'
+  | 'speech'
+  | 'result'
+  | 'error'
+  | 'ended';
+
+/**
+ * Fotografia della catena vocale, per la diagnosi.
+ *
+ * Non esce mai dal dispositivo e non viene mostrata nell'interfaccia normale:
+ * si vede solo con ?debugVoice=1. Sono dati tecnici, non un registro di cio'
+ * che viene detto - l'ultima frase e' l'unico testo presente, sta in memoria e
+ * sparisce chiudendo la pagina.
+ */
+export interface VoiceDiagnostics {
+  api: VoiceApiName;
+  mic: VoiceMicState;
+  phase: VoicePhase;
+  local: VoiceLocalState;
+  /** Consenso all'elaborazione remota dell'audio. */
+  remote: boolean;
+  lastError: string | null;
+  lastPhrase: string | null;
+}
+
 export interface VoiceHandlers {
   /** Frase riconosciuta, testo grezzo. L'interpretazione avviene altrove. */
   onTranscript?: (transcript: string) => void;
   onStatus?: (status: VoiceStatus) => void;
+  /** Aggiornamento parziale della diagnosi. Ignorato se nessuno ascolta. */
+  onDiagnostics?: (patch: Partial<VoiceDiagnostics>) => void;
 }
 
 export interface VoiceProvider {

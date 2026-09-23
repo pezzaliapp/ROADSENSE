@@ -17,7 +17,13 @@ import type { GeoSample } from '../core/types';
 import { validateEvent } from '../core/validation';
 import { admitsAlert, assessCluster } from '../hazard/assessment';
 import { hazardPriority } from '../hazard/taxonomy';
-import { BrowserVoiceProvider } from './BrowserVoiceProvider';
+import {
+  BrowserVoiceProvider,
+  onDeviceStateNow,
+  probeOnDevice,
+  resetOnDeviceState,
+  selectedVoiceApi,
+} from './BrowserVoiceProvider';
 import { DemoVoiceProvider } from './DemoVoiceProvider';
 import { parseVoiceReport } from './parser';
 import { buildVoiceEvent } from './voiceEvent';
@@ -157,13 +163,247 @@ describe('degradazione senza riconoscimento vocale', () => {
     expect(stati).toEqual(['off']);
   });
 
-  it('riconosce l\'elaborazione locale quando il browser la offre', () => {
+  it('la sola presenza di processLocally NON basta a dichiarare la voce locale', async () => {
+    // E' la diagnosi del Samsung Fold. Chrome per Android espone
+    // `processLocally` nell'interfaccia anche quando il modello italiano non
+    // e' installato: darlo per disponibile portava a chiedere un motore locale
+    // inesistente, e il riconoscimento non partiva mai.
     class Locale {}
-    // In Chrome `processLocally` sta sul prototype, non sull'istanza:
-    // il fixture deve rispecchiare la forma reale dell'API.
-    (Locale.prototype as Record<string, unknown>).processLocally = false;
+    (Locale.prototype as unknown as Record<string, unknown>).processLocally = false;
     vi.stubGlobal('window', { SpeechRecognition: Locale });
-    expect(new BrowserVoiceProvider().capabilities()).toEqual({ supported: true, onDevice: true });
+    resetOnDeviceState();
+    expect(new BrowserVoiceProvider().capabilities()).toEqual({
+      supported: true,
+      onDevice: false,
+    });
+    // Nemmeno dopo la verifica, se il browser non offre modo di verificare.
+    expect(await probeOnDevice('it-IT')).toBe(false);
+    expect(onDeviceStateNow()).toBe('non disponibile');
+  });
+
+  it('l\'elaborazione locale si afferma solo su risposta "available"', async () => {
+    class Locale {}
+    (Locale.prototype as unknown as Record<string, unknown>).processLocally = false;
+    const ctor = Locale as unknown as Record<string, unknown>;
+
+    for (const [risposta, atteso] of [
+      ['unavailable', false],
+      ['downloadable', false],
+      ['downloading', false],
+      ['available', true],
+    ] as const) {
+      ctor.availableOnDevice = () => Promise.resolve(risposta);
+      vi.stubGlobal('window', { SpeechRecognition: Locale });
+      resetOnDeviceState();
+      expect(await probeOnDevice('it-IT')).toBe(atteso);
+      expect(new BrowserVoiceProvider().capabilities().onDevice).toBe(atteso);
+    }
+  });
+
+  it('processLocally viene impostato solo quando la disponibilita\' e\' confermata', async () => {
+    const creati: Array<Record<string, unknown>> = [];
+    class Locale {
+      lang = '';
+      continuous = false;
+      interimResults = false;
+      maxAlternatives = 0;
+      constructor() {
+        creati.push(this as unknown as Record<string, unknown>);
+      }
+      start() {}
+      stop() {}
+      abort() {}
+    }
+    (Locale.prototype as unknown as Record<string, unknown>).processLocally = false;
+    const ctor = Locale as unknown as Record<string, unknown>;
+    ctor.availableOnDevice = () => Promise.resolve('unavailable');
+    vi.stubGlobal('window', { SpeechRecognition: Locale });
+    resetOnDeviceState();
+    await probeOnDevice('it-IT');
+
+    // Consenso remoto dato: parte, ma SENZA chiedere il motore locale.
+    new BrowserVoiceProvider(true).start({});
+    expect(creati).toHaveLength(1);
+    expect(creati[0]!.processLocally).toBe(false);
+  });
+
+  it('se il motore locale rifiuta la lingua si ripiega sul remoto, una volta sola', async () => {
+    const istanze: Array<Record<string, unknown>> = [];
+    class Motore {
+      lang = '';
+      continuous = false;
+      interimResults = false;
+      maxAlternatives = 0;
+      onerror: ((e: { error: string }) => void) | null = null;
+      onend: (() => void) | null = null;
+      onstart: (() => void) | null = null;
+      onresult: unknown = null;
+      constructor() {
+        istanze.push(this as unknown as Record<string, unknown>);
+      }
+      start() {}
+      stop() {}
+      abort() {}
+    }
+    (Motore.prototype as unknown as Record<string, unknown>).processLocally = false;
+    const ctor = Motore as unknown as Record<string, unknown>;
+    ctor.availableOnDevice = () => Promise.resolve('available');
+    vi.stubGlobal('window', { SpeechRecognition: Motore });
+    resetOnDeviceState();
+    await probeOnDevice('it-IT');
+
+    const stati: string[] = [];
+    new BrowserVoiceProvider(true).start({ onStatus: (s) => stati.push(s) });
+    expect(istanze).toHaveLength(1);
+    expect(istanze[0]!.processLocally).toBe(true);
+
+    // Il motore locale dichiara di non avere la lingua.
+    (istanze[0]!.onerror as (e: { error: string }) => void)({
+      error: 'language-not-supported',
+    });
+
+    // Secondo tentativo, remoto, senza processLocally.
+    expect(istanze).toHaveLength(2);
+    expect(istanze[1]!.processLocally).toBe(false);
+    expect(onDeviceStateNow()).toBe('no');
+
+    // Un secondo rifiuto NON produce un terzo tentativo: si rinuncia.
+    (istanze[1]!.onerror as (e: { error: string }) => void)({
+      error: 'language-not-supported',
+    });
+    expect(istanze).toHaveLength(2);
+    expect(stati.at(-1)).toBe('error');
+  });
+
+  it('senza consenso remoto il rifiuto locale spegne la voce, non la dichiara guasta', async () => {
+    const istanze: Array<Record<string, unknown>> = [];
+    class Motore {
+      lang = '';
+      continuous = false;
+      interimResults = false;
+      maxAlternatives = 0;
+      onerror: ((e: { error: string }) => void) | null = null;
+      onend: (() => void) | null = null;
+      onstart: (() => void) | null = null;
+      constructor() {
+        istanze.push(this as unknown as Record<string, unknown>);
+      }
+      start() {}
+      stop() {}
+      abort() {}
+    }
+    (Motore.prototype as unknown as Record<string, unknown>).processLocally = false;
+    const ctor = Motore as unknown as Record<string, unknown>;
+    ctor.availableOnDevice = () => Promise.resolve('available');
+    vi.stubGlobal('window', { SpeechRecognition: Motore });
+    resetOnDeviceState();
+    await probeOnDevice('it-IT');
+
+    const stati: string[] = [];
+    new BrowserVoiceProvider(false).start({ onStatus: (s) => stati.push(s) });
+    (istanze[0]!.onerror as (e: { error: string }) => void)({
+      error: 'language-not-supported',
+    });
+    expect(istanze).toHaveLength(1);
+    expect(stati.at(-1)).toBe('off');
+  });
+
+  it('ogni errore previsto dalle specifiche ha un esito dichiarato', async () => {
+    const casi: Array<[string, string | null]> = [
+      ['not-allowed', 'denied'],
+      ['service-not-allowed', 'denied'],
+      ['language-not-supported', 'error'],
+      ['phrases-not-supported', 'error'],
+      ['bad-grammar', 'error'],
+      // Transitori: non chiudono la sessione, si riprova.
+      ['no-speech', null],
+      ['aborted', null],
+      ['audio-capture', null],
+      ['network', null],
+    ];
+
+    for (const [errore, atteso] of casi) {
+      const istanze: Array<Record<string, unknown>> = [];
+      class Motore {
+        lang = '';
+        continuous = false;
+        interimResults = false;
+        maxAlternatives = 0;
+        onerror: ((e: { error: string }) => void) | null = null;
+        onend: (() => void) | null = null;
+        onstart: (() => void) | null = null;
+        constructor() {
+          istanze.push(this as unknown as Record<string, unknown>);
+        }
+        start() {}
+        stop() {}
+        abort() {}
+      }
+      vi.stubGlobal('window', { SpeechRecognition: Motore });
+      resetOnDeviceState();
+
+      const stati: string[] = [];
+      new BrowserVoiceProvider(true).start({ onStatus: (s) => stati.push(s) });
+      (istanze[0]!.onerror as (e: { error: string }) => void)({ error: errore });
+      expect([errore, stati.at(-1) ?? null]).toEqual([errore, atteso]);
+    }
+  });
+
+  it('sceglie SpeechRecognition dove esiste, webkit altrimenti', () => {
+    class A {}
+    class B {}
+    vi.stubGlobal('window', { SpeechRecognition: A, webkitSpeechRecognition: B });
+    expect(selectedVoiceApi()).toBe('SpeechRecognition');
+    vi.stubGlobal('window', { webkitSpeechRecognition: B });
+    expect(selectedVoiceApi()).toBe('webkitSpeechRecognition');
+    vi.stubGlobal('window', {});
+    expect(selectedVoiceApi()).toBe('assente');
+  });
+
+  it('due start consecutivi non aprono due riconoscimenti', () => {
+    const istanze: unknown[] = [];
+    class Motore {
+      lang = '';
+      continuous = false;
+      interimResults = false;
+      maxAlternatives = 0;
+      constructor() {
+        istanze.push(this);
+      }
+      start() {}
+      stop() {}
+      abort() {}
+    }
+    vi.stubGlobal('window', { SpeechRecognition: Motore });
+    resetOnDeviceState();
+    const provider = new BrowserVoiceProvider(true);
+    provider.start({});
+    provider.start({});
+    expect(istanze).toHaveLength(1);
+  });
+
+  it('il DEBUG VOCE esiste solo dietro ?debugVoice=1 e non esce dal dispositivo', () => {
+    const app = readFileSync(resolve(ROOT, 'src/App.tsx'), 'utf8');
+    // Un solo interruttore, esplicito.
+    expect(app).toMatch(/get\('debugVoice'\) === '1'/);
+    expect(app).toMatch(/\{voiceDebug && <VoiceDebugPanel/);
+    // La raccolta stessa e' condizionata: fuori dal debug non si accumula nulla.
+    expect(app).toMatch(/if \(!voiceDebug\) return;/);
+
+    const panel = readFileSync(resolve(ROOT, 'src/ui/VoiceDebugPanel.tsx'), 'utf8');
+    expect(panel).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon/);
+    // Le sette righe richieste, tutte presenti.
+    for (const riga of [
+      'API',
+      'MICROFONO',
+      'VOCE',
+      'LOCALE',
+      'REMOTO',
+      'ULTIMO ERRORE',
+      'ULTIMA FRASE',
+    ]) {
+      expect(panel).toContain(`label="${riga}"`);
+    }
   });
 
   it('nessun modulo vocale contatta la rete o richiede una chiave', () => {
