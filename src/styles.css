@@ -774,3 +774,16 @@ button {
 }
 
 .mic-bar strong { font-weight: 800; }
+
+.voice-debug .vd-sub { margin-top: 9px; }
+
+/* Divergenza fra Permissions API e getUserMedia: il dato che cerchiamo. */
+.voice-debug .vd-flag {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 176, 32, 0.14);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.35;
+}

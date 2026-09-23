@@ -86,6 +86,25 @@ export interface VoiceDiagnostics {
   remote: boolean;
   lastError: string | null;
   lastPhrase: string | null;
+  /**
+   * DIAGNOSI DEL PERMESSO MICROFONO (solo ?debugVoice=1).
+   *
+   * Due canali separati, perche' possono divergere: la Permissions API
+   * dichiara uno stato, `getUserMedia` produce un fatto. Su Chrome per
+   * Android non e' garantito che coincidano, e leggerli insieme impedisce di
+   * distinguerli. Sono valori LETTERALI: niente qui e' dedotto.
+   */
+  permissionsApi: 'disponibile' | 'non disponibile';
+  permissionsValue: 'granted' | 'prompt' | 'denied' | 'errore' | '--';
+  getUserMedia:
+    | 'non tentato'
+    | 'successo'
+    | 'NotAllowedError'
+    | 'NotFoundError'
+    | 'NotReadableError'
+    | 'altro errore';
+  /** Nome esatto dell'errore quando non rientra nei tre previsti. */
+  getUserMediaDetail: string | null;
 }
 
 export interface VoiceHandlers {

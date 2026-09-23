@@ -36,10 +36,11 @@ import {
 import { DemoVoiceProvider } from './voice/DemoVoiceProvider';
 import type { VoiceDiagnostics, VoiceProvider, VoiceStatus } from './voice/VoiceProvider';
 import {
+  attemptOf,
   browserMicEnvironment,
-  type MicPermission,
+  interpretPermission,
   micMessage,
-  readMicPermission,
+  readMicPermissionRaw,
   requestMicrophone,
 } from './voice/micPermission';
 import { parseVoiceReport } from './voice/parser';
@@ -144,6 +145,10 @@ export default function App() {
     remote: false,
     lastError: null,
     lastPhrase: null,
+    permissionsApi: 'non disponibile',
+    permissionsValue: '--',
+    getUserMedia: 'non tentato',
+    getUserMediaDetail: null,
   }));
   const pushDiagnostics = useCallback(
     (patch: Partial<VoiceDiagnostics>) => {
@@ -161,19 +166,20 @@ export default function App() {
    * rifiutato" da "era gia' bloccato". Vive anche in un ref perche' al momento
    * del tocco va letto senza aspettare un re-render.
    */
-  const micPermissionRef = useRef<MicPermission>('sconosciuto');
   /**
-   * Il microfono e' bloccato dal browser: e' l'unico caso in cui ha senso
-   * parlare di impostazioni del sito, e va detto in modo che resti leggibile.
+   * Il microfono si e' gia' aperto in questa sessione.
+   *
+   * E' l'unica cosa che viene ricordata, ed e' un FATTO verificato, non uno
+   * stato dichiarato. Serve solo a evitare una richiesta inutile: nessun
+   * valore negativo viene memorizzato, perche' un fallimento non deve mai
+   * impedire il tentativo successivo.
+   */
+  const micUsableRef = useRef(false);
+  /**
+   * Il microfono risulta bloccato dalle impostazioni del sito: e' l'unico
+   * caso in cui ha senso rimandarci, e va detto in modo che resti leggibile.
    */
   const [micBlocked, setMicBlocked] = useState(false);
-  const rememberMic = useCallback(
-    (value: MicPermission) => {
-      micPermissionRef.current = value;
-      pushDiagnostics({ mic: value });
-    },
-    [pushDiagnostics],
-  );
 
   const reducedMotion = useReducedMotion();
   const { updateReady, applyUpdate } = usePwaUpdate();
@@ -631,13 +637,21 @@ export default function App() {
    */
   useEffect(() => {
     let cancelled = false;
-    void readMicPermission(browserMicEnvironment()).then((value) => {
-      if (!cancelled) rememberMic(value);
+    void readMicPermissionRaw(browserMicEnvironment()).then((raw) => {
+      if (cancelled) return;
+      // Solo informazione: questo valore non decide niente e non impedisce
+      // nessun tentativo. La diagnosi mostra il dato LETTERALE, la riga
+      // MICROFONO la sua lettura.
+      pushDiagnostics({
+        mic: micUsableRef.current ? 'permesso' : interpretPermission(raw),
+        permissionsApi: raw === 'non disponibile' ? 'non disponibile' : 'disponibile',
+        permissionsValue: raw === 'non disponibile' ? '--' : raw,
+      });
     });
     return () => {
       cancelled = true;
     };
-  }, [rememberMic, voiceEnabled, running]);
+  }, [pushDiagnostics, voiceEnabled, running]);
 
   /**
    * Stato della voce a monitoraggio fermo.
@@ -688,13 +702,32 @@ export default function App() {
     // attesa messa sopra questa riga - anche una sola - fa decadere il gesto
     // e Android rifiuta senza mostrare niente: e' esattamente cio' che
     // accadeva sul Fold, dove la verifica del motore locale veniva prima.
-    const mic = await requestMicrophone(browserMicEnvironment(), micPermissionRef.current);
-    rememberMic(mic.permission);
-    setMicBlocked(mic.outcome === 'bloccato');
+    // La Permissions API non e' un cancello: qui si verifica aprendo davvero
+    // il microfono. L'unica scorciatoia e' positiva - gia' verificato in
+    // questa sessione - e in diagnosi (?debugVoice=1) viene ignorata anche
+    // quella, per poter osservare i due canali separatamente.
+    const mic = await requestMicrophone(browserMicEnvironment(), {
+      verified: micUsableRef.current,
+      force: voiceDebug,
+    });
+    pushDiagnostics({
+      mic: mic.permission,
+      getUserMedia: attemptOf(mic),
+      getUserMediaDetail: mic.errorName,
+      ...(mic.permissionRaw && mic.permissionRaw !== 'non disponibile'
+        ? { permissionsValue: mic.permissionRaw }
+        : {}),
+    });
 
-    if (mic.outcome !== 'permesso' && mic.outcome !== 'sconosciuto') {
+    if (mic.usable) {
+      // Verificato: il microfono si apre. Qualunque stato negativo precedente
+      // era una fotografia vecchia e viene cancellato.
+      micUsableRef.current = true;
+      setMicBlocked(false);
+    } else if (mic.outcome !== 'sconosciuto') {
+      // Nessun fallimento viene memorizzato: il prossimo tocco riprova.
       // 'bloccato' e' l'UNICO caso in cui si parla di impostazioni del sito.
-      // Un rifiuto appena dato si risolve toccando di nuovo VOCE.
+      setMicBlocked(mic.outcome === 'bloccato');
       if (mic.outcome === 'bloccato') setStatus((st) => ({ ...st, voice: 'denied' }));
       const message = micMessage(mic.outcome);
       if (message) showToast(message);
@@ -740,7 +773,7 @@ export default function App() {
     showToast(
       "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
     );
-  }, [voiceEnabled, demo, voiceConsent, showToast, rememberMic, pushDiagnostics]);
+  }, [voiceEnabled, demo, voiceConsent, showToast, pushDiagnostics, voiceDebug]);
 
   // -- START / STOP ---------------------------------------------------------
   const start = useCallback(async () => {

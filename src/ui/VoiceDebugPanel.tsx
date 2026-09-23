@@ -29,7 +29,19 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: stri
 }
 
 export function VoiceDebugPanel({ diagnostics }: Props) {
-  const { api, mic, phase, local, remote, lastError, lastPhrase } = diagnostics;
+  const {
+    api,
+    mic,
+    phase,
+    local,
+    remote,
+    lastError,
+    lastPhrase,
+    permissionsApi,
+    permissionsValue,
+    getUserMedia,
+    getUserMediaDetail,
+  } = diagnostics;
 
   const apiTone = api === 'assente' ? 'bad' : 'ok';
   const micTone = mic === 'permesso' ? 'ok' : mic === 'negato' ? 'bad' : 'warn';
@@ -40,6 +52,17 @@ export function VoiceDebugPanel({ diagnostics }: Props) {
         ? 'bad'
         : 'warn';
   const localTone = local === 'si' ? 'ok' : 'warn';
+  const permApiTone = permissionsApi === 'disponibile' ? 'ok' : 'warn';
+  const permValueTone =
+    permissionsValue === 'granted' ? 'ok' : permissionsValue === 'denied' ? 'bad' : 'warn';
+  const gumTone =
+    getUserMedia === 'successo' ? 'ok' : getUserMedia === 'non tentato' ? 'warn' : 'bad';
+
+  /**
+   * La divergenza che stiamo cercando: il permesso risulta negato ma il
+   * microfono si apre lo stesso. Se compare, il problema non e' dell'utente.
+   */
+  const divergenza = permissionsValue === 'denied' && getUserMedia === 'successo';
 
   return (
     <section className="voice-debug" role="status" aria-label="Debug voce">
@@ -51,6 +74,26 @@ export function VoiceDebugPanel({ diagnostics }: Props) {
       <Row label="REMOTO" value={`consenso ${remote ? 'si' : 'no'}`} />
       <Row label="ULTIMO ERRORE" value={lastError ?? '--'} tone={lastError ? 'bad' : ''} />
       <Row label="ULTIMA FRASE" value={lastPhrase ?? '--'} />
+
+      {/* I due canali del permesso, separati. Nessuno dei due e' dedotto:
+          sono i valori che le API hanno restituito. */}
+      <div className="vd-title vd-sub">PERMISSIONS API</div>
+      <Row label="DISPONIBILE" value={permissionsApi} tone={permApiTone} />
+      <Row label="QUERY" value={permissionsValue} tone={permValueTone} />
+
+      <div className="vd-title vd-sub">GETUSERMEDIA</div>
+      <Row label="ESITO" value={getUserMedia} tone={gumTone} />
+      {getUserMedia === 'altro errore' && (
+        <Row label="ERRORE" value={getUserMediaDetail ?? '--'} tone="bad" />
+      )}
+
+      {divergenza && (
+        <div className="vd-flag">
+          DIVERGENZA: la Permissions API dichiara <strong>denied</strong>, ma il microfono si e'
+          aperto. Il permesso del dispositivo non e' il problema.
+        </div>
+      )}
+
       <div className="vd-note">Solo su questo dispositivo. Nessun dato inviato.</div>
     </section>
   );
