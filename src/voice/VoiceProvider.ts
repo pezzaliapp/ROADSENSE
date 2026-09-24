@@ -13,8 +13,12 @@
  * - Nessun browser mantiene il microfono attivo a schermo spento o con l'app
  *   in secondo piano. ZERO TOUCH significa "senza toccare il telefono", non
  *   "con il telefono in tasca".
- * - L'ascolto continuo si interrompe da solo dopo silenzio o rumore: si
- *   riavvia automaticamente, ed e' il massimo che una PWA possa fare.
+ * - L'ascolto e' INTERMITTENTE, non continuo. Il primo test in auto su iPhone
+ *   ha mostrato che un riconoscitore sempre aperto tiene attiva una sessione
+ *   audio di registrazione: iOS dirotta l'audio e l'impianto dell'auto
+ *   (Bluetooth / CarPlay) viene di fatto silenziato. Un'app che ascolta non
+ *   puo' impedire di ascoltare la musica. ROAD SENSE apre finestre di ascolto
+ *   e fra l'una e l'altra RILASCIA il riconoscitore.
  */
 
 export type VoiceStatus =
@@ -67,7 +71,11 @@ export type VoicePhase =
   | 'speech'
   | 'result'
   | 'error'
-  | 'ended';
+  | 'ended'
+  /** Fra due finestre di ascolto: il riconoscitore e' rilasciato. */
+  | 'pausa'
+  /** Sospeso perche' ROAD SENSE sta parlando. */
+  | 'voce ROAD SENSE';
 
 /**
  * Fotografia della catena vocale, per la diagnosi.
@@ -86,6 +94,12 @@ export interface VoiceDiagnostics {
   remote: boolean;
   lastError: string | null;
   lastPhrase: string | null;
+  /**
+   * Ultimi eventi emessi da SpeechRecognition, in ordine.
+   * Sono i nomi reali degli eventi del browser: servono a capire dove si
+   * ferma la catena su un telefono che non si ha in mano.
+   */
+  events: string;
   /**
    * DIAGNOSI DEL PERMESSO MICROFONO (solo ?debugVoice=1).
    *
@@ -121,4 +135,15 @@ export interface VoiceProvider {
   capabilities(): VoiceCapabilities;
   start(handlers: VoiceHandlers): void;
   stop(): void;
+  /**
+   * Rilascia il riconoscitore perche' ROAD SENSE sta per parlare.
+   *
+   * Senza questo, la voce sintetica finirebbe nel microfono e potrebbe essere
+   * interpretata come una nuova segnalazione: l'app parlerebbe a se stessa.
+   * Non e' un "ignora i risultati": il riconoscitore viene proprio chiuso,
+   * cosi' su iOS la sintesi non deve nemmeno contendersi la sessione audio.
+   */
+  pause?(): void;
+  /** Riapre l'ascolto dopo che ROAD SENSE ha finito di parlare. */
+  resume?(): void;
 }

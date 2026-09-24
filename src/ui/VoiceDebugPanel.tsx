@@ -37,6 +37,7 @@ export function VoiceDebugPanel({ diagnostics }: Props) {
     remote,
     lastError,
     lastPhrase,
+    events,
     permissionsApi,
     permissionsValue,
     getUserMedia,
@@ -72,6 +73,10 @@ export function VoiceDebugPanel({ diagnostics }: Props) {
       <Row label="VOCE" value={phase} tone={phaseTone} />
       <Row label="LOCALE" value={local} tone={localTone} />
       <Row label="REMOTO" value={`consenso ${remote ? 'si' : 'no'}`} />
+      {/* Gli eventi REALI emessi da SpeechRecognition, nell'ordine in cui
+          sono arrivati. E' il dato che dice dove si ferma la catena su un
+          telefono che non si ha in mano. */}
+      <Row label="EVENTI" value={events || '--'} />
       <Row label="ULTIMO ERRORE" value={lastError ?? '--'} tone={lastError ? 'bad' : ''} />
       <Row label="ULTIMA FRASE" value={lastPhrase ?? '--'} />
 

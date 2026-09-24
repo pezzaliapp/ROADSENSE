@@ -97,6 +97,53 @@ export const DETECTION = {
   /** Rotazione massima ammessa (deg/s): sopra, e' il telefono che si muove. */
   maxRotationRate: 220,
 
+  /**
+   * ANTI-MANIPOLAZIONE.
+   *
+   * Il primo test su strada ha prodotto 257 eventi: bastava toccare il
+   * telefono. I criteri esistenti non bastavano perche' guardano l'impulso, e
+   * un telefono preso in mano produce impulsi perfetti. Serve guardare il
+   * CONTESTO: un telefono fermo in un supporto e uno in mano si comportano in
+   * modo diverso anche quando l'accelerazione verticale e' identica.
+   *
+   * ATTENZIONE - QUESTE SOGLIE SONO PROVVISORIE.
+   * Sono ricavate da ordini di grandezza fisici, non da misure su strada:
+   *
+   *   - in un supporto, la rotazione segue il veicolo: curve e rotonde stanno
+   *     tipicamente sotto i 30 deg/s, una manovra brusca sotto i 60;
+   *   - una mano che prende o ruota il telefono supera facilmente i 150 deg/s;
+   *   - una buca spinge soprattutto in VERTICALE: la componente verticale e'
+   *     la parte dominante dell'accelerazione totale. Una manipolazione
+   *     produce componenti orizzontali confrontabili.
+   *
+   * VANNO VALIDATE CON UN TEST REALE prima di considerarle definitive.
+   * `?sensorDebug=1` mostra i valori misurati proprio per questo.
+   */
+  stability: {
+    /** Rotazione (deg/s) oltre la quale il telefono NON e' fermo nel veicolo. */
+    gyroStableDps: 60,
+    /** Rotazione (deg/s) che qualifica una manipolazione vera e propria. */
+    manipulationDps: 150,
+    /** Finestra su cui si valuta la rotazione massima recente, ms. */
+    windowMs: 1500,
+    /**
+     * Dopo una manipolazione forte non si creano eventi stradali per questo
+     * tempo: il telefono deve prima tornare fermo e la gravita' ristabilirsi.
+     */
+    quarantineMs: 5000,
+    /**
+     * Il veicolo deve essere in moto CONTINUATIVAMENTE da questo tempo.
+     * Un singolo campione GPS sopra soglia non basta: a veicolo fermo il GPS
+     * produce velocita' fantasma di pochi m/s per deriva del segnale.
+     */
+    minMotionHoldMs: 4000,
+    /**
+     * Quota minima della componente verticale sull'accelerazione totale al
+     * picco. Sotto, l'urto non viene dalla strada.
+     */
+    minVerticalShare: 0.55,
+  },
+
   /** Fondo irregolare: RMS sostenuto sopra soglia per una durata minima. */
   rough: {
     rmsThreshold: 2.4,
@@ -263,6 +310,45 @@ export const VOICE = {
   /** Lingua del riconoscimento. */
   lang: 'it-IT',
   /**
+   * ASCOLTO INTERMITTENTE.
+   *
+   * Il primo test su iPhone ha mostrato che tenere `SpeechRecognition` sempre
+   * aperto disturba pesantemente l'audio: iOS passa a una sessione audio di
+   * registrazione e l'impianto dell'auto (Bluetooth / CarPlay) viene di fatto
+   * silenziato. Un'applicazione che ascolta non puo' impedire di ascoltare la
+   * musica.
+   *
+   * ROAD SENSE quindi NON tiene il microfono aperto: ascolta a finestre e fra
+   * una finestra e l'altra RILASCIA davvero il riconoscitore.
+   *
+   * ATTENZIONE - QUESTI TEMPI SONO PROVVISORI.
+   * Il ragionamento dietro i valori:
+   *
+   *   - un comando ROAD SENSE e' una frase sola ("ROAD SENSE, buca"): dura
+   *     tipicamente 2-3 secondi. Una finestra deve contenerne una intera con
+   *     margine, quindi non puo' scendere sotto i ~6 s;
+   *   - la pausa serve a iOS per chiudere la sessione di registrazione e
+   *     restituire l'audio all'impianto: troppo breve e non cambia nulla,
+   *     troppo lunga e si perdono comandi;
+   *   - chi parla durante la pausa non viene sentito. E' accettabile perche'
+   *     la parola di attivazione va comunque pronunciata e si ripete: e'
+   *     preferibile a un'app che spegne la radio.
+   *
+   * VANNO VALIDATI CON UN TEST REALE IN AUTO.
+   */
+  listen: {
+    /** Durata massima di una finestra di ascolto, ms. */
+    windowMs: 8000,
+    /** Pausa fra due finestre, con riconoscitore RILASCIATO, ms. */
+    gapMs: 1500,
+    /**
+     * Attesa aggiuntiva dopo che ROAD SENSE ha finito di parlare, prima di
+     * riaprire il microfono. Evita che la coda della voce sintetica venga
+     * raccolta dal riconoscitore.
+     */
+    afterSpeechMs: 700,
+  },
+  /**
    * Parola di attivazione. Senza, ogni conversazione in auto diventerebbe una
    * segnalazione: e' cio' che rende utilizzabile un microfono sempre acceso.
    */
@@ -294,6 +380,19 @@ export const SPEECH = {
   cooldownMs: 90_000,
   /** Intervallo minimo fra due enunciati QUALSIASI, ms. */
   minGapMs: 8000,
+  /**
+   * Tempo oltre il quale un enunciato si considera concluso anche se il
+   * browser non ha mai emesso `end`.
+   *
+   * Serve come rete di sicurezza: su iOS `onend` a volte non arriva, e senza
+   * questo limite il riconoscitore resterebbe in pausa per sempre, cioe' la
+   * voce smetterebbe di funzionare del tutto. Stimato dalla lunghezza del
+   * testo, con un minimo.
+   */
+  maxUtteranceMs: 12000,
+  minUtteranceMs: 2500,
+  /** Millisecondi stimati per carattere pronunciato, per la stima di durata. */
+  msPerChar: 75,
 } as const;
 
 // ---------------------------------------------------------------------------

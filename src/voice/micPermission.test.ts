@@ -140,13 +140,11 @@ describe('un fallimento non chiude la porta', () => {
     expect(secondo.permission).toBe('permesso');
   });
 
-  it('nessuno stato negativo e\' memorizzato in App', () => {
-    const app = readFileSync(resolve(ROOT, 'src/App.tsx'), 'utf8');
-    // Si ricorda solo il fatto positivo, e solo dopo averlo verificato.
-    expect(app).toMatch(/micUsableRef\.current = true;/);
-    expect(app).not.toMatch(/micUsableRef\.current = false/);
-    // E il valore ricordato viene passato come scorciatoia positiva.
-    expect(app).toMatch(/verified: micUsableRef\.current/);
+  it('nessuno stato negativo viene memorizzato dal modulo', () => {
+    // Il modulo non conserva niente fra una chiamata e l'altra: ogni
+    // tentativo riparte da zero, quindi un errore non puo' chiudere la porta.
+    const modulo = readFileSync(resolve(ROOT, 'src/voice/micPermission.ts'), 'utf8');
+    expect(modulo).not.toMatch(/^let |^var /m);
   });
 });
 
@@ -313,19 +311,40 @@ describe('vincoli strutturali', () => {
   );
   const senzaCommenti = toggle.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
-  it('getUserMedia resta la prima operazione asincrona del tocco', () => {
-    const prima = senzaCommenti.slice(0, senzaCommenti.indexOf('await requestMicrophone('));
-    expect(prima).not.toMatch(/\bawait\b/);
-    expect(senzaCommenti.indexOf('await requestMicrophone(')).toBeLessThan(
-      senzaCommenti.indexOf('await probeOnDevice('),
-    );
+  it('il primo recognition.start() avviene dentro il gesto', () => {
+    // `prime()` e' sincrona fino a `recognition.start()`. Fra l'inizio del
+    // tocco e quella chiamata non ci deve essere NESSUN `await`: su Android
+    // e' cio' che fa comparire la richiesta del microfono, e un'attesa fa
+    // decadere l'attivazione del gesto.
+    const prime = senzaCommenti.indexOf('primer.prime(');
+    expect(prime).toBeGreaterThan(-1);
+    expect(senzaCommenti.slice(0, prime)).not.toMatch(/\bawait\b/);
   });
 
-  it('il permesso microfono resta distinto dal consenso remoto', () => {
-    const mic = senzaCommenti.indexOf('requestMicrophone(');
-    const consenso = senzaCommenti.indexOf("setVoiceConsent('granted')");
-    expect(mic).toBeGreaterThan(-1);
-    expect(mic).toBeLessThan(consenso);
+  it('ne\' Permissions API ne\' getUserMedia precedono il riconoscitore', () => {
+    // Sono informazioni, non permessi per SpeechRecognition: non possono
+    // impedire un tentativo, e infatti vengono dopo.
+    const prime = senzaCommenti.indexOf('primer.prime(');
+    const gum = senzaCommenti.indexOf('requestMicrophone(');
+    const perm = senzaCommenti.indexOf('readMicPermissionRaw(');
+    if (gum > -1) expect(gum).toBeGreaterThan(prime);
+    if (perm > -1) expect(perm).toBeGreaterThan(prime);
+  });
+
+  it('getUserMedia viene usata SOLO nel percorso di diagnosi', () => {
+    const gum = senzaCommenti.indexOf('requestMicrophone(');
+    expect(gum).toBeGreaterThan(-1);
+    // Deve stare dentro il blocco `if (voiceDebug)`.
+    const debugBlock = senzaCommenti.indexOf('if (voiceDebug)');
+    expect(debugBlock).toBeGreaterThan(-1);
+    expect(gum).toBeGreaterThan(debugBlock);
+  });
+
+  it('il consenso all\'elaborazione remota resta una decisione separata', () => {
+    // Il microfono e' un permesso di sistema; mandare l'audio a un servizio
+    // esterno e' un'altra cosa, e ha il suo consenso esplicito.
+    expect(senzaCommenti).toMatch(/setVoiceConsent\('pending'\)/);
+    expect(senzaCommenti).toMatch(/setVoiceConsent\('granted'\)/);
     const modulo = readFileSync(resolve(ROOT, 'src/voice/micPermission.ts'), 'utf8');
     expect(modulo).not.toMatch(/voiceConsent|allowRemote|processLocally/);
   });
@@ -337,6 +356,10 @@ describe('vincoli strutturali', () => {
 
   it('la forzatura vive SOLO nel percorso di diagnosi', () => {
     const usi = app.match(/force:\s*\w+/g) ?? [];
-    expect(usi).toEqual(['force: voiceDebug']);
+    expect(usi).toEqual(['force: true']);
+    // E quell'unico uso sta dentro il blocco di diagnosi.
+    expect(senzaCommenti.indexOf('force: true')).toBeGreaterThan(
+      senzaCommenti.indexOf('if (voiceDebug)'),
+    );
   });
 });

@@ -179,18 +179,48 @@ describe('frasi pronunciate', () => {
     const frase = roadAlertPhrase(
       cluster,
       800,
-      valutazione({ detail: { hazard: 'broken_down_vehicle', lane: 'second_lane' } }),
+      valutazione({
+        priority: hazardPriority('broken_down_vehicle'),
+        detail: { hazard: 'broken_down_vehicle', lane: 'second_lane' },
+      }),
     );
     expect(frase).toBe('Attenzione. Veicolo in avaria in seconda corsia tra 800 metri.');
   });
 
   it('senza corsia non inventano una posizione', () => {
-    const frase = roadAlertPhrase(cluster, 500, valutazione({ detail: { hazard: 'stopped_vehicle' } }));
-    expect(frase).toBe('Attenzione. Veicolo fermo tra 500 metri.');
+    const frase = roadAlertPhrase(
+      cluster,
+      500,
+      valutazione({
+        priority: hazardPriority('stopped_vehicle'),
+        detail: { hazard: 'stopped_vehicle' },
+      }),
+    );
+    // Nessuna corsia nei dati, nessuna corsia nella frase.
+    expect(frase).toBe('Veicolo fermo tra 500 metri.');
+  });
+
+  it('"Attenzione" e\' riservato ai pericoli gravi', () => {
+    // Se precedesse ogni avviso smetterebbe di significare qualcosa.
+    const grave = roadAlertPhrase(
+      cluster,
+      300,
+      valutazione({ priority: 'critical', detail: { hazard: 'wrong_way_car' } }),
+    );
+    const ordinario = roadAlertPhrase(
+      cluster,
+      300,
+      valutazione({ priority: 'medium', detail: { hazard: 'stopped_vehicle' } }),
+    );
+    expect(grave).toMatch(/^Attenzione\. /);
+    expect(ordinario).not.toMatch(/Attenzione/);
   });
 
   it('ricadono sulla famiglia quando manca il dettaglio', () => {
-    expect(roadAlertPhrase(cluster, 300)).toContain('Attenzione.');
+    // Un rilevamento dei sensori non sa dire di piu' di "buca": e non lo dice.
+    const frase = roadAlertPhrase(cluster, 300);
+    expect(frase).toBe('Veicolo fermo tra 300 metri.');
+    expect(frase).not.toMatch(/corsia/);
   });
 
   it('quando non e\' confermata, la frase lo dice', () => {

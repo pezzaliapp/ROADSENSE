@@ -22,9 +22,20 @@ export function spokenDistance(meters: number): string {
 
 /**
  * Frase per un pericolo sulla strada.
+ *
  * `hazard` e `lane` arrivano dall'evento piu' descrittivo del gruppo, quando
  * c'e': un cluster nato da una segnalazione vocale sa dire molto piu' di uno
- * nato da un accelerometro.
+ * nato da un accelerometro. Non si aggiunge NIENTE che non sia nei dati: una
+ * buca rilevata dai sensori resta "buca", senza corsia inventata.
+ *
+ * "Attenzione" NON apre ogni frase. Se precedesse anche l'avviso piu' banale
+ * smetterebbe di significare qualcosa, ed e' proprio sui pericoli gravi che
+ * deve far alzare la testa. Lo si dice per i pericoli classificati `critical`
+ * o `high` - un contromano, un veicolo in avaria - non per una buca.
+ *
+ * La classificazione NON viene decisa qui: si legge dalla tassonomia, dove e'
+ * gia' scritta. Duplicarla significherebbe avere due verita' che prima o poi
+ * divergono.
  */
 export function roadAlertPhrase(
   cluster: EventCluster,
@@ -32,22 +43,33 @@ export function roadAlertPhrase(
   assessment?: HazardAssessment | null,
 ): string {
   const cosa = hazardText(cluster.type, assessment?.detail);
+  const dove = `tra ${spokenDistance(distanceM)}`;
+  const grave = assessment?.priority === 'critical' || assessment?.priority === 'high';
+  const apertura = grave ? 'Attenzione. ' : '';
+
   // Quando nessun altro dispositivo ha confermato, la frase lo dice.
   // Un pericolo grave va annunciato lo stesso, ma chi ascolta deve sapere
   // che si tratta di una segnalazione singola: gravita' e affidabilita' sono
   // due cose diverse e vanno pronunciate come tali.
   if (assessment?.confirmation === 'reported') {
-    return `Attenzione. ${cosa} segnalato tra ${spokenDistance(distanceM)}. Segnalazione non ancora confermata.`;
+    return `${apertura}${cosa} segnalato ${dove}. Segnalazione non ancora confermata.`;
   }
-  return `Attenzione. ${cosa} tra ${spokenDistance(distanceM)}.`;
+  return `${apertura}${cosa} ${dove}.`;
 }
 
-/** Frase per un avviso meteo, coerente con i due stati del banner. */
+/**
+ * Frase per un avviso meteo, coerente con i due stati del banner.
+ *
+ * Dentro la cella il fenomeno c'e': si dice "Attenzione". Davanti e' una
+ * previsione, e una previsione si annuncia come tale - "Possibile" - perche'
+ * dichiarare come certo cio' che e' stimato sarebbe inventare un dettaglio
+ * che i dati non contengono.
+ */
 export function weatherAlertPhrase(alert: WeatherAlert): string {
   const meta = WEATHER_META[alert.cell.kind];
   if (alert.forecast.inside) return `Attenzione. ${meta.label} nell'area attuale.`;
-  const eta = alert.displayEtaSec !== null ? ` tra ${formatEta(alert.displayEtaSec)}` : '';
-  return `Attenzione. ${meta.label} sul percorso${eta}.`;
+  const eta = alert.displayEtaSec !== null ? ` tra circa ${formatEta(alert.displayEtaSec)}` : '';
+  return `Possibile ${meta.label.toLowerCase()} sul percorso${eta}.`;
 }
 
 /** Conferma parlata di una segnalazione vocale accolta. */

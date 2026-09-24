@@ -35,11 +35,11 @@ import {
 } from './voice/BrowserVoiceProvider';
 import { DemoVoiceProvider } from './voice/DemoVoiceProvider';
 import type { VoiceDiagnostics, VoiceProvider, VoiceStatus } from './voice/VoiceProvider';
+import type { DetectionTelemetry } from './core/DetectionEngine';
 import {
   attemptOf,
   browserMicEnvironment,
   interpretPermission,
-  micMessage,
   readMicPermissionRaw,
   requestMicrophone,
 } from './voice/micPermission';
@@ -72,6 +72,7 @@ import { usePwaUpdate } from './ui/usePwaUpdate';
 import { useReducedMotion } from './ui/useReducedMotion';
 import { useWakeLock } from './ui/useWakeLock';
 import { VoiceDebugPanel } from './ui/VoiceDebugPanel';
+import { SensorDebugPanel } from './ui/SensorDebugPanel';
 
 function isDemoRequested(): boolean {
   if (typeof window === 'undefined') return false;
@@ -85,6 +86,16 @@ function isDemoRequested(): boolean {
 function isVoiceDebugRequested(): boolean {
   if (typeof window === 'undefined') return false;
   return new URLSearchParams(window.location.search).get('debugVoice') === '1';
+}
+
+/**
+ * DEBUG SENSORI: mostra i valori misurati dal rilevamento.
+ * Serve a calibrare le soglie anti-falso-positivo con un test reale invece
+ * che a intuito. Come il debug voce, nulla esce dal dispositivo.
+ */
+function isSensorDebugRequested(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get('sensorDebug') === '1';
 }
 
 export default function App() {
@@ -137,6 +148,16 @@ export default function App() {
    * mai il dispositivo. Nell'interfaccia normale non viene mostrata.
    */
   const [voiceDebug] = useState(isVoiceDebugRequested);
+  const [sensorDebug] = useState(isSensorDebugRequested);
+  /**
+   * Fotografia dei sensori, aggiornata a bassa frequenza.
+   * I campioni arrivano a 50 Hz: ridisegnare a quel ritmo sarebbe uno spreco
+   * e renderebbe i numeri illeggibili.
+   */
+  const [telemetry, setTelemetry] = useState<DetectionTelemetry | null>(null);
+  const telemetryAtRef = useRef(0);
+  const autoEventsRef = useRef(0);
+  const [autoEvents, setAutoEvents] = useState(0);
   const [diagnostics, setDiagnostics] = useState<VoiceDiagnostics>(() => ({
     api: 'assente',
     mic: 'sconosciuto',
@@ -145,6 +166,7 @@ export default function App() {
     remote: false,
     lastError: null,
     lastPhrase: null,
+    events: '',
     permissionsApi: 'non disponibile',
     permissionsValue: '--',
     getUserMedia: 'non tentato',
@@ -176,10 +198,23 @@ export default function App() {
    */
   const micUsableRef = useRef(false);
   /**
-   * Il microfono risulta bloccato dalle impostazioni del sito: e' l'unico
-   * caso in cui ha senso rimandarci, e va detto in modo che resti leggibile.
+   * Il riconoscitore ha dichiarato `not-allowed`: il microfono non e'
+   * disponibile per ROAD SENSE. Lo dice SpeechRecognition, che e' l'unico che
+   * lo sa davvero - non la Permissions API, che al primo test su Android
+   * dichiarava un blocco inesistente.
    */
   const [micBlocked, setMicBlocked] = useState(false);
+
+  /**
+   * Stato della voce, con l'avviso persistente collegato.
+   * Un messaggio che sparisce non basta: finche' il microfono e' negato la
+   * riga resta sullo schermo, e sparisce da sola appena l'ascolto parte.
+   */
+  const handleVoiceStatus = useCallback((voice: VoiceStatus) => {
+    setStatus((st) => ({ ...st, voice }));
+    if (voice === 'denied') setMicBlocked(true);
+    if (voice === 'listening') setMicBlocked(false);
+  }, []);
 
   const reducedMotion = useReducedMotion();
   const { updateReady, applyUpdate } = usePwaUpdate();
@@ -192,6 +227,19 @@ export default function App() {
   const alertRef = useRef<AlertEngine>(new AlertEngine());
   const weatherEngineRef = useRef<WeatherAlertEngine>(new WeatherAlertEngine());
   const voiceRef = useRef<VoiceProvider | null>(null);
+  /**
+   * Mentre ROAD SENSE parla, il riconoscitore viene RILASCIATO.
+   *
+   * Due motivi, entrambi osservati nel primo test in auto: la voce sintetica
+   * rientrerebbe dal microfono e "Attenzione, buca segnalata" diventerebbe
+   * una segnalazione di buca - l'app parlerebbe a se stessa; e su iOS sintesi
+   * e riconoscimento si contendono la stessa sessione audio.
+   */
+  const handleSpeakingChange = useCallback((speaking: boolean) => {
+    const voice = voiceRef.current;
+    if (speaking) voice?.pause?.();
+    else voice?.resume?.();
+  }, []);
   const voiceReceiptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechRef = useRef<AlertSpeechEngine>(
     new AlertSpeechEngine(
@@ -528,7 +576,23 @@ export default function App() {
   const handleSample = useCallback(
     (sample: EngineSample) => {
       const detection = detectRef.current.push(sample);
+
+      if (sensorDebug) {
+        // Aggiornamento a ~4 Hz, tranne quando succede qualcosa: un impulso o
+        // un evento devono restare visibili anche se durano un campione.
+        const tele = detectRef.current.lastTelemetry();
+        const now = Date.now();
+        if (tele.eventEmitted || tele.impulseDetected || now - telemetryAtRef.current > 250) {
+          telemetryAtRef.current = now;
+          setTelemetry(tele);
+        }
+      }
+
       if (!detection) return;
+      if (sensorDebug) {
+        autoEventsRef.current += 1;
+        setAutoEvents(autoEventsRef.current);
+      }
 
       const event: RoadEvent = {
         id: newEventId(),
@@ -551,7 +615,7 @@ export default function App() {
       };
       recordEvent(event);
     },
-    [demo, recordEvent],
+    [demo, recordEvent, sensorDebug],
   );
 
   /**
@@ -605,18 +669,34 @@ export default function App() {
       return;
     }
 
+    // Il motore della voce parlata deve poter chiudere questo riconoscitore.
+    speechRef.current.setHandlers({ onSpeakingChange: handleSpeakingChange });
+
     provider.start({
       onTranscript: handleTranscript,
-      onStatus: (voice: VoiceStatus) => setStatus((s) => ({ ...s, voice })),
+      onStatus: handleVoiceStatus,
       // Raccolta solo quando il pannello e' aperto: a regime non esiste.
       ...(voiceDebug ? { onDiagnostics: pushDiagnostics } : {}),
     });
 
     return () => {
+      // STOP deve garantire che non resti NESSUN riconoscitore attivo: senza
+      // questo, su iOS la sessione audio resterebbe aperta e l'impianto
+      // dell'auto muto anche a monitoraggio fermo.
       provider.stop();
       voiceRef.current = null;
     };
-  }, [running, voiceEnabled, demo, voiceConsent, handleTranscript, voiceDebug, pushDiagnostics]);
+  }, [
+    running,
+    voiceEnabled,
+    demo,
+    voiceConsent,
+    handleTranscript,
+    voiceDebug,
+    pushDiagnostics,
+    handleVoiceStatus,
+    handleSpeakingChange,
+  ]);
 
   /**
    * Fotografia iniziale della catena, con ?debugVoice=1.
@@ -695,85 +775,59 @@ export default function App() {
     }
 
     // Verifica del supporto: sincrona, non cede il controllo al browser.
-    if (!new BrowserVoiceProvider().capabilities().supported) return;
+    const caps = new BrowserVoiceProvider().capabilities();
+    if (!caps.supported) return;
 
-    // PRIMA COSA, e senza nessun await prima: la finestra nativa del
-    // microfono. Deve aprirsi dentro l'attivazione di QUESTO tocco. Qualunque
-    // attesa messa sopra questa riga - anche una sola - fa decadere il gesto
-    // e Android rifiuta senza mostrare niente: e' esattamente cio' che
-    // accadeva sul Fold, dove la verifica del motore locale veniva prima.
-    // La Permissions API non e' un cancello: qui si verifica aprendo davvero
-    // il microfono. L'unica scorciatoia e' positiva - gia' verificato in
-    // questa sessione - e in diagnosi (?debugVoice=1) viene ignorata anche
-    // quella, per poter osservare i due canali separatamente.
-    const mic = await requestMicrophone(browserMicEnvironment(), {
-      verified: micUsableRef.current,
-      force: voiceDebug,
-    });
-    pushDiagnostics({
-      mic: mic.permission,
-      getUserMedia: attemptOf(mic),
-      getUserMediaDetail: mic.errorName,
-      ...(mic.permissionRaw && mic.permissionRaw !== 'non disponibile'
-        ? { permissionsValue: mic.permissionRaw }
-        : {}),
-    });
-
-    if (mic.usable) {
-      // Verificato: il microfono si apre. Qualunque stato negativo precedente
-      // era una fotografia vecchia e viene cancellato.
-      micUsableRef.current = true;
-      setMicBlocked(false);
-    } else if (mic.outcome !== 'sconosciuto') {
-      // Nessun fallimento viene memorizzato: il prossimo tocco riprova.
-      // 'bloccato' e' l'UNICO caso in cui si parla di impostazioni del sito.
-      setMicBlocked(mic.outcome === 'bloccato');
-      if (mic.outcome === 'bloccato') setStatus((st) => ({ ...st, voice: 'denied' }));
-      const message = micMessage(mic.outcome);
-      if (message) showToast(message);
-      return;
-    }
-
-    // Solo ora, con il microfono concesso, ha senso chiedersi DOVE verra'
-    // elaborato l'audio. La verifica e' reale: la sola presenza dell'opzione
-    // `processLocally` non dice nulla sul fatto che il modello italiano sia
-    // installato sul telefono.
-    const onDevice = await probeOnDevice();
-    pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() });
-
-    if (onDevice) {
-      // Elaborazione sul dispositivo: non c'e' nulla da autorizzare oltre al
-      // microfono, l'audio non esce di qui.
-      setVoiceEnabled(true);
-      return;
-    }
-
-    // Da qui in poi si parla di una cosa DIVERSA dal microfono: mandare
-    // l'audio a un servizio esterno del browser. E' un secondo consenso, e
-    // resta separato.
-    if (voiceConsent === 'granted') {
-      setVoiceEnabled(true);
-      showToast(
-        "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
-      );
-      return;
-    }
-
-    if (voiceConsent === 'none') {
+    // Primo tocco senza elaborazione locale confermata: si chiede il consenso
+    // all'elaborazione remota e non si accende niente. E' una decisione su
+    // DOVE finisce l'audio, diversa e separata dal permesso del microfono.
+    if (!caps.onDevice && voiceConsent === 'none') {
       setVoiceConsent('pending');
       showToast(
         "Questo browser non elabora la voce sul dispositivo: l'audio verrebbe inviato a un servizio esterno. Tocca di nuovo VOCE per accettare.",
       );
       return;
     }
+    const remote = !caps.onDevice;
+    if (remote && voiceConsent !== 'granted') setVoiceConsent('granted');
 
-    // Secondo tocco: consenso all'elaborazione remota dato.
-    setVoiceConsent('granted');
+    // >>> NESSUN await sopra questa riga. <<<
+    // Questo e' il primo `recognition.start()`, e deve avvenire dentro
+    // l'attivazione di QUESTO tocco: su Android e' la chiamata che fa
+    // comparire la richiesta del microfono. Ne' la Permissions API ne'
+    // getUserMedia la precedono: non sono permessi per SpeechRecognition,
+    // sono informazioni, e un'informazione non puo' impedire un tentativo.
+    const primer = new BrowserVoiceProvider(remote);
+    primer.prime({
+      onStatus: handleVoiceStatus,
+      onDiagnostics: pushDiagnostics,
+    });
     setVoiceEnabled(true);
-    showToast(
-      "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
+    if (remote) {
+      showToast(
+        "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
+      );
+    }
+
+    // Da qui in poi si puo' attendere: sono dati per la diagnosi e per la
+    // sessione successiva, non condizioni di avvio.
+    void probeOnDevice().then(() =>
+      pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() }),
     );
-  }, [voiceEnabled, demo, voiceConsent, showToast, pushDiagnostics, voiceDebug]);
+    if (voiceDebug) {
+      // Solo in diagnosi: serve a confrontare cio' che dichiara il permesso
+      // con cio' che fa davvero il microfono. Non autorizza niente.
+      const mic = await requestMicrophone(browserMicEnvironment(), { force: true });
+      pushDiagnostics({
+        mic: mic.permission,
+        getUserMedia: attemptOf(mic),
+        getUserMediaDetail: mic.errorName,
+        ...(mic.permissionRaw && mic.permissionRaw !== 'non disponibile'
+          ? { permissionsValue: mic.permissionRaw }
+          : {}),
+      });
+    }
+  }, [voiceEnabled, demo, voiceConsent, showToast, pushDiagnostics, voiceDebug, handleVoiceStatus]);
 
   // -- START / STOP ---------------------------------------------------------
   const start = useCallback(async () => {
@@ -940,8 +994,8 @@ export default function App() {
           dato NON arriva qui: si risolve toccando di nuovo VOCE. */}
       {micBlocked && !demo && (
         <div className="mic-bar" role="alert">
-          <strong>MICROFONO BLOCCATO.</strong> Riattivalo nelle impostazioni del sito, poi tocca di
-          nuovo VOCE.
+          <strong>MICROFONO NON AUTORIZZATO.</strong> Tocca di nuovo VOCE per riprovare. Se non
+          compare nessuna richiesta, abilita il microfono nelle impostazioni del sito.
         </div>
       )}
 
@@ -955,8 +1009,11 @@ export default function App() {
         </div>
       )}
 
-      {/* Diagnosi: esiste solo con ?debugVoice=1. */}
+      {/* Diagnosi: esistono solo con i rispettivi parametri nell'indirizzo. */}
       {voiceDebug && <VoiceDebugPanel diagnostics={diagnostics} />}
+      {sensorDebug && telemetry && (
+        <SensorDebugPanel telemetry={telemetry} eventCount={autoEvents} />
+      )}
 
       <div className="map-wrap">
         <MapView
