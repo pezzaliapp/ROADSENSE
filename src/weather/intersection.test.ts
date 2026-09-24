@@ -10,7 +10,12 @@ import { describe, expect, it } from 'vitest';
 
 import { WEATHER } from '../config/config';
 import { destinationPoint, distanceM } from '../core/geo';
-import { cellCentreAt, forecastIntersection, type RouteAhead } from './intersection';
+import {
+  cellCentreAt,
+  cellRadiusAt,
+  forecastIntersection,
+  type RouteAhead,
+} from './intersection';
 import { approachBand } from './weatherAlerts';
 import type { WeatherCell } from './WeatherProvider';
 
@@ -187,5 +192,118 @@ describe('fasce di avvicinamento', () => {
 
   it('nessuna previsione, nessuna fascia', () => {
     expect(approachBand({ inside: false, roadDistanceM: null, etaSec: null })).toBe(-1);
+  });
+});
+
+/**
+ * IL CONO DI NOWCAST.
+ *
+ * Il punto dell'integrazione: la traiettoria meteorologica appartiene a chi
+ * la calcola. Quando il cono c'e', ROAD SENSE lo LEGGE; quando non c'e' -
+ * la demo non ne ha - resta la deriva lineare di sempre.
+ */
+describe('traiettoria dal cono', () => {
+  /** Cella con cono: si muove verso nord e il raggio si allarga. */
+  const conCono: WeatherCell = {
+    id: 'n1',
+    kind: 'hail',
+    lat: 45.0,
+    lon: 9.0,
+    radiusM: 2500,
+    // Deriva DELIBERATAMENTE incoerente con il cono: se venisse usata,
+    // i test se ne accorgono.
+    driftHeading: 90,
+    driftSpeedMps: 50,
+    cone: [
+      { minutes: 0, lat: 45.0, lon: 9.0, radiusM: 2000 },
+      { minutes: 10, lat: 45.1, lon: 9.0, radiusM: 6000 },
+      { minutes: 20, lat: 45.2, lon: 9.0, radiusM: 10000 },
+    ],
+    severity: 2,
+    announce: true,
+    simulated: false,
+  };
+
+  it('ai minuti esatti restituisce il punto di NOWCAST', () => {
+    expect(cellCentreAt(conCono, 0)).toEqual({ lat: 45.0, lon: 9.0 });
+    expect(cellCentreAt(conCono, 600).lat).toBeCloseTo(45.1, 6);
+    expect(cellCentreAt(conCono, 1200).lat).toBeCloseTo(45.2, 6);
+  });
+
+  it('fra due punti interpola linearmente', () => {
+    expect(cellCentreAt(conCono, 300).lat).toBeCloseTo(45.05, 6);
+    expect(cellCentreAt(conCono, 900).lat).toBeCloseTo(45.15, 6);
+  });
+
+  it('il cono vince sulla deriva: la traiettoria NON viene ricostruita', () => {
+    // La deriva direbbe "verso est a 50 m/s": il centro resta sul meridiano.
+    const p = cellCentreAt(conCono, 600);
+    expect(p.lon).toBeCloseTo(9.0, 6);
+    expect(p.lat).toBeGreaterThan(45.0);
+  });
+
+  it('il raggio cresce lungo il cono, ed e\' interpolato', () => {
+    expect(cellRadiusAt(conCono, 0)).toBe(2000);
+    expect(cellRadiusAt(conCono, 300)).toBeCloseTo(4000, 6);
+    expect(cellRadiusAt(conCono, 600)).toBe(6000);
+  });
+
+  it('a t=0 vale cone[0], non radiusM dichiarato sulla cella', () => {
+    // Nei dati reali i due numeri non coincidono.
+    expect(conCono.radiusM).toBe(2500);
+    expect(cellRadiusAt(conCono, 0)).toBe(2000);
+  });
+
+  it('oltre l\'ultimo punto si usa l\'ultimo: mai estrapolazione', () => {
+    const oltre = cellCentreAt(conCono, 99_999);
+    expect(oltre.lat).toBeCloseTo(45.2, 6);
+    expect(cellRadiusAt(conCono, 99_999)).toBe(10000);
+  });
+
+  it('prima del primo punto si usa il primo', () => {
+    expect(cellCentreAt(conCono, -100)).toEqual({ lat: 45.0, lon: 9.0 });
+    expect(cellRadiusAt(conCono, -100)).toBe(2000);
+  });
+
+  it('un cono disordinato viene comunque letto in ordine di minuti', () => {
+    const disordinato: WeatherCell = {
+      ...conCono,
+      cone: [conCono.cone![2]!, conCono.cone![0]!, conCono.cone![1]!],
+    };
+    // L'ordinamento avviene nel provider; qui si verifica che la ricerca del
+    // segmento non produca comunque un risultato assurdo.
+    expect(cellRadiusAt(disordinato, 0)).toBeGreaterThan(0);
+  });
+});
+
+describe('senza cono il comportamento resta quello della demo', () => {
+  const senzaCono: WeatherCell = {
+    id: 'd1',
+    kind: 'hail',
+    lat: 45.0,
+    lon: 9.0,
+    radiusM: 3000,
+    driftHeading: 0,
+    driftSpeedMps: 10,
+    severity: 2,
+    announce: true,
+    simulated: true,
+  };
+
+  it('la deriva lineare e\' ancora quella', () => {
+    const p = cellCentreAt(senzaCono, 60);
+    // 600 m verso nord: circa 0.0054 gradi di latitudine.
+    expect(p.lat).toBeGreaterThan(45.0);
+    expect(p.lon).toBeCloseTo(9.0, 4);
+  });
+
+  it('il raggio resta costante', () => {
+    expect(cellRadiusAt(senzaCono, 0)).toBe(3000);
+    expect(cellRadiusAt(senzaCono, 600)).toBe(3000);
+  });
+
+  it('senza direzione la cella resta ferma', () => {
+    const ferma = { ...senzaCono, driftHeading: null };
+    expect(cellCentreAt(ferma, 600)).toEqual({ lat: 45.0, lon: 9.0 });
   });
 });

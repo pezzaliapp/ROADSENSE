@@ -27,7 +27,7 @@
 
 import { WEATHER } from '../config/config';
 import { destinationPoint, distanceM } from '../core/geo';
-import type { WeatherCell } from './WeatherProvider';
+import type { ConePoint, WeatherCell } from './WeatherProvider';
 
 /**
  * Il percorso davanti al veicolo.
@@ -62,17 +62,69 @@ export interface CellForecast {
 
 const NO_INTERSECTION: CellForecast = { inside: false, roadDistanceM: null, etaSec: null };
 
-/** Posizione del centro della cella dopo `tSec` secondi di deriva. */
+/**
+ * Dove si trova `tSec` lungo il cono, e con che peso fra i due punti vicini.
+ *
+ * Fuori dagli estremi si usa l'estremo, mai un'estrapolazione: oltre
+ * l'orizzonte della sorgente non esiste previsione, e inventarne una
+ * significherebbe rimettere in ROAD SENSE proprio il calcolo che si e'
+ * deciso di non fare.
+ */
+function coneSegment(
+  cone: readonly ConePoint[],
+  tSec: number,
+): { a: ConePoint; b: ConePoint; k: number } {
+  const first = cone[0] as ConePoint;
+  const last = cone[cone.length - 1] as ConePoint;
+  const minutes = tSec / 60;
+  if (minutes <= first.minutes) return { a: first, b: first, k: 0 };
+  if (minutes >= last.minutes) return { a: last, b: last, k: 0 };
+
+  for (let i = 1; i < cone.length; i++) {
+    const b = cone[i] as ConePoint;
+    if (minutes > b.minutes) continue;
+    const a = cone[i - 1] as ConePoint;
+    const span = b.minutes - a.minutes;
+    return { a, b, k: span > 0 ? (minutes - a.minutes) / span : 0 };
+  }
+  return { a: last, b: last, k: 0 };
+}
+
+/**
+ * Posizione del centro della cella al tempo `tSec`.
+ *
+ * Con il cono della sorgente si LEGGE la traiettoria, non si ricostruisce:
+ * la previsione meteorologica appartiene a chi la calcola. La deriva lineare
+ * resta solo per la demo, che un cono non ce l'ha.
+ */
 export function cellCentreAt(cell: WeatherCell, tSec: number): { lat: number; lon: number } {
+  if (cell.cone && cell.cone.length > 0) {
+    const { a, b, k } = coneSegment(cell.cone, tSec);
+    return { lat: a.lat + (b.lat - a.lat) * k, lon: a.lon + (b.lon - a.lon) * k };
+  }
   if (cell.driftHeading === null || cell.driftSpeedMps <= 0 || tSec <= 0) {
     return { lat: cell.lat, lon: cell.lon };
   }
   return destinationPoint(cell, cell.driftHeading, cell.driftSpeedMps * tSec);
 }
 
+/**
+ * Raggio della cella al tempo `tSec`.
+ *
+ * Nel cono cresce: e' l'incertezza che si allarga, non la cella. Senza cono
+ * resta costante, come e' sempre stato.
+ */
+export function cellRadiusAt(cell: WeatherCell, tSec: number): number {
+  if (cell.cone && cell.cone.length > 0) {
+    const { a, b, k } = coneSegment(cell.cone, tSec);
+    return a.radiusM + (b.radiusM - a.radiusM) * k;
+  }
+  return cell.radiusM;
+}
+
 /** true se il punto si trova dentro la cella al tempo `tSec`. */
 function insideAt(cell: WeatherCell, point: { lat: number; lon: number }, tSec: number): boolean {
-  return distanceM(point, cellCentreAt(cell, tSec)) <= cell.radiusM;
+  return distanceM(point, cellCentreAt(cell, tSec)) <= cellRadiusAt(cell, tSec);
 }
 
 /**
@@ -86,8 +138,10 @@ export function forecastIntersection(
   driver: WeatherDriverState,
   route: RouteAhead | null,
 ): CellForecast {
-  // Gia' dentro adesso: e' uno stato, non una previsione.
-  if (distanceM(driver, { lat: cell.lat, lon: cell.lon }) <= cell.radiusM) {
+  // Gia' dentro adesso: e' uno stato, non una previsione. Il centro e il
+  // raggio si prendono all'istante 0, che con il cono non coincide
+  // necessariamente con `lat`/`lon`/`radiusM` dichiarati sulla cella.
+  if (distanceM(driver, cellCentreAt(cell, 0)) <= cellRadiusAt(cell, 0)) {
     return { inside: true, roadDistanceM: 0, etaSec: 0 };
   }
 

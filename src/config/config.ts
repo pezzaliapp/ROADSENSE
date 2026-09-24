@@ -576,6 +576,28 @@ export const WEATHER = {
    * fisso sullo schermo o di ripetersi a caso.
    */
   bandsM: [3000, 1500, 700] as readonly number[],
+  /**
+   * Collegamento a NOWCAST: sola lettura, nessun parametro, nessuna
+   * credenziale. La posizione di chi guida non lascia il dispositivo.
+   */
+  nowcast: {
+    url: 'https://nowcast.pezzalihub.app/api/road-alerts',
+    timeoutMs: 5000,
+    /**
+     * Intervallo fra due richieste, ms.
+     *
+     * Cinque minuti non sono arbitrari: il cono di NOWCAST ha passo 5 minuti
+     * ed e' costruito su frame radar della stessa cadenza. Chiedere piu'
+     * spesso non produce dati nuovi, produce solo carico su un server che
+     * oggi riceve ogni richiesta - la cache della rete di distribuzione NON
+     * e' attiva su questo percorso (misurato: cf-cache-status DYNAMIC).
+     */
+    pollMs: 300_000,
+    /** Sfasamento casuale, ms: evita che tutti i dispositivi chiamino insieme. */
+    jitterMs: 30_000,
+    /** Attesa crescente dopo richieste fallite, ms. */
+    backoffMs: [300_000, 600_000, 1_200_000] as readonly number[],
+  },
   /** Durata di visualizzazione dell'avviso, ms. */
   displayMs: 14_000,
   /** Non ripetere la stessa cella nella stessa fascia prima di questo tempo, ms. */

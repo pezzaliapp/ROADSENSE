@@ -253,6 +253,30 @@ l'accelerometro scollegato. A monitoraggio fermo ROAD SENSE non osserva nulla.
 
 ---
 
+## Meteo: NOWCAST
+
+Il meteo reale arriva da [NOWCAST](https://nowcast.pezzalihub.app/), un
+progetto indipendente. ROAD SENSE lo interroga **in sola lettura**, e la
+richiesta è deliberatamente muta:
+
+- **nessun parametro e nessun corpo**: la posizione di chi guida **non lascia
+  il dispositivo**. ROAD SENSE riceve tutti gli alert attivi e filtra in
+  locale;
+- **nessun cookie, nessuna credenziale, nessun referrer**
+  (`credentials: 'omit'`, `referrerPolicy: 'no-referrer'`): NOWCAST non può
+  distinguere un dispositivo da un altro;
+- **nessuna autenticazione, nessun account, nessun identificatore**;
+- una richiesta ogni cinque minuti, e **solo mentre il monitoraggio è attivo**:
+  mai da fermi, mai a pagina nascosta, mai offline, mai in DEMO MODE.
+
+Come per qualsiasi richiesta di rete, il server riceve l'indirizzo IP del
+dispositivo: è inevitabile e va detto. Nient'altro viene trasmesso.
+
+Se NOWCAST non risponde, il meteo semplicemente non compare. Nessun'altra
+funzione di ROAD SENSE ne risente.
+
+---
+
 ## Cartografia
 
 La cartografia proviene da [OpenFreeMap](https://openfreemap.org/), con dati

@@ -421,10 +421,18 @@ l'utente.
 L'architettura è già predisposta, ma **nulla di tutto questo è nella v0.1.0**.
 
 **Road Weather.** `WeatherProvider` in `src/weather/` fissa il contratto di una
-sorgente meteo. L'unica implementazione attiva è `DemoWeatherProvider`, che
-produce dati inventati in modo **sincrono** — sincrono di proposito: rende
-impossibile per costruzione una chiamata di rete. `NowcastWeatherProvider` è
-uno stub che non si connette a nulla.
+sorgente meteo. `DemoWeatherProvider` produce dati inventati per la DEMO MODE;
+`NowcastWeatherProvider` legge alert reali da NOWCAST.
+
+`cells()` resta **sincrona** in entrambi: la rete vive in un `refresh()`
+separato, interrogato da un timer. Così il disegno sulla mappa e la previsione
+dell'incontro leggono sempre lo stesso istantaneo, e una richiesta lenta non
+può mai ritardare un fotogramma.
+
+La traiettoria della cella **non viene ricostruita**: ogni alert porta il
+`cone` già proiettato dal motore di NOWCAST, e `cellCentreAt` / `cellRadiusAt`
+vi interpolano sopra. Senza `cone` — il caso della demo — resta la deriva
+lineare di sempre.
 
 Il disegno resta separato dalla semantica: `MapView` conosce solo `AreaOverlay`
 («un cerchio con un'etichetta e una direzione di spostamento») e non sa cosa
@@ -501,13 +509,25 @@ voci indipendenti la superino**.
 temperatura, indice di aderenza e un riferimento **tecnico** del sensore (mai
 riferibile a una persona). Basta implementare un provider.
 
-**NOWCAST — integrazione futura, non presente.** ROAD SENSE e NOWCAST restano
-due progetti **indipendenti**: repository separati, deployment separati,
-nessuna dipendenza in nessuna direzione. Un malfunzionamento di ROAD SENSE non
-può compromettere NOWCAST, perché ROAD SENSE non lo conosce. Un'eventuale
-integrazione avverrebbe come un ulteriore `SensorProvider` opzionale il cui
-fallimento degrada a "nessun dato meteo", esattamente come oggi degrada
-l'assenza dell'accelerometro.
+**NOWCAST — integrazione in sola lettura.** ROAD SENSE e NOWCAST restano due
+progetti **indipendenti**: repository separati, deployment separati, nessuna
+dipendenza di codice in nessuna direzione. L'unico punto di contatto è una
+`GET` su `/api/road-alerts`, un endpoint pubblico che proietta alert **già
+decisi** dal motore.
+
+La divisione delle responsabilità è netta, ed è il motivo per cui il punteggio
+non viene trasportato:
+
+| | decide |
+|---|---|
+| **NOWCAST** | se il pericolo meteorologico esiste, e se esiste ancora |
+| **ROAD SENSE** | se quel pericolo incrocia la posizione o il percorso, e quando |
+
+Un malfunzionamento di ROAD SENSE non può compromettere NOWCAST, perché ROAD
+SENSE si limita a leggere. Il fallimento inverso degrada a "nessun dato meteo",
+esattamente come degrada l'assenza dell'accelerometro: contratto sconosciuto,
+dati dichiarati fermi, frame scaduto, timeout, CORS negato o JSON malformato
+producono tutti lo stesso esito — nessuna cella, nessuna eccezione.
 
 **Sorgente cartografica.** `MapTileProvider` in `config/mapProviders.ts`
 astrae il fornitore e copre sia le sorgenti **vettoriali** sia quelle

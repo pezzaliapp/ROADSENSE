@@ -161,29 +161,43 @@ describe('DemoWeatherProvider', () => {
   });
 });
 
-describe('NowcastWeatherProvider e\' soltanto uno stub', () => {
+describe("NowcastWeatherProvider: indipendenza dai due progetti", () => {
   const nowcast = new NowcastWeatherProvider();
   const source = readFileSync(resolve(ROOT, 'src', 'weather', 'NowcastWeatherProvider.ts'), 'utf8');
+  // I commenti NOMINANO cio' che il codice non fa: vanno tolti, altrimenti
+  // una spiegazione corretta farebbe fallire la verifica che descrive.
+  const codice = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
-  it('non e\' disponibile e non restituisce dati', () => {
+  it('finche\' non ha letto nulla non fornisce dati', () => {
     expect(nowcast.isAvailable()).toBe(false);
     expect(nowcast.cells()).toEqual([]);
   });
 
-  it('dichiara perche\' non e\' disponibile', () => {
-    expect(nowcast.unavailableReason).toMatch(/v0\.1\.0/);
-  });
-
-  it('non contiene alcuna primitiva di rete ne\' alcun indirizzo', () => {
-    expect(source).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket|EventSource/);
-    expect(source).not.toMatch(/https?:\/\//);
-  });
-
-  it('non importa nulla da NOWCAST', () => {
+  it('non importa NULLA da NOWCAST: nessuna dipendenza di codice', () => {
+    // I due progetti restano indipendenti. L'unico contatto e' una GET su un
+    // endpoint pubblico: nessun modulo, nessun tipo, nessuna costante
+    // condivisa in nessuna direzione.
     const imports = source.match(/^import .*$/gm) ?? [];
     for (const line of imports) {
-      expect(line).toMatch(/from '\.\/WeatherProvider'/);
+      expect(line).toMatch(/from '\.\.?\/(config\/config|WeatherProvider)'/);
     }
+  });
+
+  it('non interpreta il punteggio di NOWCAST', () => {
+    // La decisione "questo pericolo esiste" appartiene a NOWCAST. Il
+    // punteggio non arriva nemmeno nel contratto: cosi' non puo' essere
+    // interpretato per sbaglio.
+    expect(codice).not.toMatch(/\bscore\b|punteggio|soglia|threshold|isteresi/i);
+  });
+
+  it('non invia credenziali, cookie o referrer', () => {
+    expect(codice).toMatch(/credentials: 'omit'/);
+    expect(codice).toMatch(/referrerPolicy: 'no-referrer'/);
+    expect(codice).not.toMatch(/Authorization|Cookie|token|apiKey/i);
+  });
+
+  it("l'unico indirizzo sta nella configurazione, non nel provider", () => {
+    expect(codice).not.toMatch(/https?:\/\/[a-z]/);
   });
 });
 

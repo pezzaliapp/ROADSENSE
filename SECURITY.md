@@ -46,7 +46,7 @@ form-action 'none';
 script-src 'self';
 style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob: https://tiles.openfreemap.org;
-connect-src 'self' https://tiles.openfreemap.org;
+connect-src 'self' https://tiles.openfreemap.org https://nowcast.pezzalihub.app;
 worker-src 'self' blob:;
 manifest-src 'self';
 upgrade-insecure-requests

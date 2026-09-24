@@ -42,8 +42,9 @@ export function weatherCellsToOverlays(
       color: meta.color,
       driftHeading: cell.driftHeading,
       glyph: meta.glyph,
-      // "NOWCAST" identifica la sorgente ipotetica del dato, non un servizio
-      // realmente contattato.
+      // Fuori dalla demo la sorgente e' davvero NOWCAST: la didascalia dice
+      // da dove viene il dato, ed e' verificabile. In demo il chip DEMO
+      // dichiara gia' che tutto cio' che si vede e' inventato.
       caption: 'NOWCAST',
       label: meta.label,
       ...LOOK[cell.kind],

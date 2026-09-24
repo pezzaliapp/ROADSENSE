@@ -1,21 +1,46 @@
 /**
  * ROAD SENSE - astrazione delle sorgenti meteo.
  *
- * STATO NELLA v0.1.0
- * ROAD SENSE **non e' collegato a NOWCAST**. Non esistono API, connessioni,
- * backend o dipendenze verso NOWCAST, e non devono essere introdotte.
- * L'unica implementazione attiva e' `DemoWeatherProvider`, che produce dati
- * inventati e funziona solo in DEMO MODE.
+ * DUE SORGENTI, UN SOLO CONTRATTO
+ * - `DemoWeatherProvider` inventa celle e funziona solo in DEMO MODE;
+ * - `NowcastWeatherProvider` legge alert REALI gia' decisi da NOWCAST.
  *
- * PERCHE' ESISTE QUESTA INTERFACCIA
- * Per fissare il contratto prima di avere l'integrazione, e per dimostrare che
  * ROAD SENSE e NOWCAST restano due progetti indipendenti: il meteo entra da
- * una porta laterale, e se quella porta e' chiusa ROAD SENSE funziona
- * esattamente come prima.
+ * una porta laterale, in sola lettura, e se quella porta e' chiusa ROAD SENSE
+ * funziona esattamente come prima.
+ *
+ * CHI DECIDE COSA
+ *   NOWCAST    se il pericolo meteorologico esiste, e se esiste ANCORA.
+ *   ROAD SENSE se quel pericolo incrocia la strada di chi guida, e quando.
+ *
+ * ROAD SENSE non interpreta punteggi, soglie, isteresi, vita della cella o
+ * conferme dei servizi meteo: sono decisioni che appartengono al motore che
+ * le sa prendere. Per questo il contratto NON trasporta il punteggio.
  */
 
-/** Fenomeni che una sorgente meteo puo' segnalare sul percorso. */
+/**
+ * Fenomeni che una sorgente meteo puo' segnalare sul percorso.
+ *
+ * `heavyRain` esiste solo per la demo: NOWCAST produce esclusivamente
+ * grandine e downburst, e non si inventa una sorgente che non c'e'.
+ */
 export type WeatherKind = 'heavyRain' | 'hail' | 'downburst';
+
+/**
+ * Un punto della traiettoria prevista, come lo calcola NOWCAST.
+ *
+ * ROAD SENSE NON ricostruisce il moto della cella: lo riceve. Il raggio
+ * cresce con i minuti perche' e' il cono di incertezza della previsione, non
+ * la dimensione fisica del fenomeno.
+ */
+export interface ConePoint {
+  /** Minuti dall'istante del frame meteo. */
+  minutes: number;
+  lat: number;
+  lon: number;
+  /** Raggio a quel minuto, in metri. */
+  radiusM: number;
+}
 
 /**
  * Cella meteorologica: un'area circolare in movimento.
@@ -33,12 +58,29 @@ export interface WeatherCell {
   lon: number;
   /** Raggio dell'area, in metri. */
   radiusM: number;
-  /** Direzione di spostamento prevista, gradi 0..359. `null` se ignota. */
+  /**
+   * Direzione di spostamento prevista, gradi 0..359. `null` se ignota.
+   * Usata per la deriva lineare SOLO quando `cone` non c'e'.
+   */
   driftHeading: number | null;
-  /** Velocita' di spostamento prevista, m/s. */
+  /** Velocita' di spostamento prevista, m/s. Vedi nota su `driftHeading`. */
   driftSpeedMps: number;
-  /** Minuti previsti prima che il fenomeno interessi il percorso. */
-  etaMin: number;
+  /**
+   * Traiettoria prevista dalla sorgente meteo.
+   *
+   * Quando c'e', e' l'unica verita' sul moto della cella: centro e raggio si
+   * leggono da qui, interpolando fra i punti. Quando manca - la demo non ne
+   * ha - si ricade sulla deriva lineare, che resta il comportamento storico.
+   */
+  cone?: readonly ConePoint[];
+  /**
+   * Minuti previsti prima che il fenomeno interessi il percorso.
+   *
+   * Opzionale: lo valorizza solo la demo. Per i dati reali il tempo di
+   * incontro lo calcola `forecastIntersection` contro il percorso, e NOWCAST
+   * non espone nulla di equivalente.
+   */
+  etaMin?: number;
   /** 1 = debole, 2 = significativo, 3 = intenso. */
   severity: 1 | 2 | 3;
   /**
@@ -54,17 +96,14 @@ export interface WeatherCell {
    * senza moltiplicare i banner.
    */
   announce: boolean;
-  /** Sempre true nella v0.1.0: sono dati simulati. */
-  simulated: true;
+  /** true per i dati inventati della demo, false per gli alert NOWCAST. */
+  simulated: boolean;
 }
 
 export interface WeatherProvider {
   readonly id: string;
   readonly label: string;
-  /**
-   * true solo se il provider puo' realmente fornire dati.
-   * Nella v0.1.0 e' true unicamente per il provider della demo.
-   */
+  /** true solo se il provider puo' realmente fornire dati in questo momento. */
   isAvailable(): boolean;
   /**
    * Celle come si trovano NELL'ISTANTE `now`.

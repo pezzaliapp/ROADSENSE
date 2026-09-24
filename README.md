@@ -170,12 +170,18 @@ l'avviso non è più una previsione ma una previsione **confermata da ciò che
 accade sull'asfalto** — e ha la precedenza su una previsione non confermata,
 anche se più vicina.
 
-> **NOWCAST NON è collegato a ROAD SENSE.** Non esistono API, connessioni,
-> backend o dipendenze. `DemoWeatherProvider` genera dati inventati in locale,
-> in modo sincrono; `NowcastWeatherProvider` è uno **stub** che non effettua
-> alcuna connessione. Tutto il meteo esiste **esclusivamente in DEMO MODE**, è
-> etichettato `ROAD WEATHER · SIMULAZIONE` e ha una grafica deliberatamente
-> diversa da quella degli eventi stradali. I test lo verificano.
+> **NOWCAST è collegato in sola lettura.** `NowcastWeatherProvider` esegue una
+> `GET` su un endpoint pubblico di NOWCAST — **senza parametri, senza corpo,
+> senza credenziali**: la posizione di chi guida non lascia il dispositivo.
+> `DemoWeatherProvider` resta la sorgente della DEMO MODE e continua a generare
+> dati inventati in locale.
+>
+> I due progetti restano **indipendenti**: nessuna dipendenza di codice in
+> nessuna direzione, solo un contratto JSON. **NOWCAST decide se il pericolo
+> esiste** (punteggi, soglie, isteresi, conferme dei servizi meteo); **ROAD
+> SENSE decide solo se quel pericolo incrocia la strada, e quando**. Il
+> punteggio non entra nemmeno nel contratto, così non può essere interpretato
+> per sbaglio. Se NOWCAST non risponde, il meteo semplicemente non compare.
 
 > Gli eventi demo sono marcati `demo: true`, salvati in una chiave di storage
 > separata e **rifiutati dalla validazione lato backend**: non possono
@@ -387,7 +393,7 @@ anche con la voce in ingresso disattivata o non supportata.
 
 - **non esiste ancora una rete reale** di veicoli ROAD SENSE;
 - il multi-veicolo della demo è **simulato**, e lo dichiara;
-- **NOWCAST reale non è collegato**;
+- il meteo reale arriva da **NOWCAST in sola lettura**, e se NOWCAST tace non compare nulla;
 - ROAD SENSE è **sperimentale, pre-beta**;
 - **non è un sistema di sicurezza certificato**;
 - il conducente **non deve interagire manualmente con lo smartphone durante

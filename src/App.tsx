@@ -58,6 +58,7 @@ import type { EventCluster, EventType, GeoSample, RoadEvent, SystemStatus } from
 import { backendEnabled, fetchNearby, postEvents } from './net/api';
 
 import { DemoWeatherProvider } from './weather/DemoWeatherProvider';
+import { NowcastWeatherProvider } from './weather/NowcastWeatherProvider';
 import { WeatherAlertEngine, type WeatherAlert } from './weather/weatherAlerts';
 import type { WeatherCell } from './weather/WeatherProvider';
 
@@ -256,6 +257,13 @@ export default function App() {
   const routeHintRef = useRef<number | undefined>(undefined);
   /** Sorgente meteo della demo: possiede l'unico orologio dello scenario. */
   const weatherProviderRef = useRef<DemoWeatherProvider | null>(null);
+  /**
+   * Sorgente meteo REALE. Vive separata da quella della demo perche' i due
+   * cicli sono diversi: la demo ha un orologio proprio, NOWCAST si interroga
+   * ogni tanto e degrada da solo quando non risponde.
+   */
+  const nowcastRef = useRef<NowcastWeatherProvider | null>(null);
+  const nowcastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** true solo in DEMO MODE: fuori non esiste alcun percorso noto. */
   const demoRef = useRef(false);
   /**
@@ -332,7 +340,8 @@ export default function App() {
 
   // -- sorgente meteo: ESCLUSIVAMENTE in DEMO MODE -------------------------
   // Fuori dalla demo non viene nemmeno costruita: nella v0.1.0 ROAD SENSE non
-  // ha alcuna sorgente meteo reale, e NOWCAST non e' collegato.
+  // ha una sorgente propria: in demo le celle sono inventate, fuori dalla
+  // demo arrivano da NOWCAST (effetto separato, piu' sotto).
   useEffect(() => {
     demoRef.current = demo;
     if (!demo) {
@@ -355,6 +364,59 @@ export default function App() {
       setWeatherCells([]);
     };
   }, [demo]);
+
+  /**
+   * Meteo reale da NOWCAST.
+   *
+   * Si interroga SOLO mentre il monitoraggio e' attivo: a veicolo fermo non
+   * serve, e ogni richiesta raggiunge un server che non ha cache davanti.
+   * Mai in demo, mai offline, mai a pagina nascosta.
+   *
+   * Nessun fallimento di NOWCAST puo' propagarsi: l'esito peggiore possibile
+   * e' nessuna cella meteo, cioe' ROAD SENSE come se il meteo non esistesse.
+   */
+  useEffect(() => {
+    if (demo || !running) return;
+
+    const provider = nowcastRef.current ?? new NowcastWeatherProvider();
+    nowcastRef.current = provider;
+    // Catturato qui: al momento della pulizia il ref potrebbe gia' puntare
+    // altrove, e si azzererebbe il motore sbagliato.
+    const weatherEngine = weatherEngineRef.current;
+    let stopped = false;
+
+    const applica = () => {
+      if (stopped) return;
+      const cells = provider.isAvailable() ? provider.cells() : [];
+      weatherCellsRef.current = cells;
+      setWeatherCells(cells);
+    };
+
+    const giro = () => {
+      if (stopped) return;
+      // A pagina nascosta non si consuma rete: il monitoraggio non e'
+      // utilizzabile comunque a schermo spento.
+      const visibile = typeof document === 'undefined' || document.visibilityState !== 'hidden';
+      const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+      const attesa = visibile && online ? provider.refresh().then(applica) : Promise.resolve();
+      void attesa.finally(() => {
+        if (stopped) return;
+        nowcastTimerRef.current = setTimeout(giro, provider.nextDelayMs());
+      });
+    };
+
+    giro();
+
+    return () => {
+      stopped = true;
+      if (nowcastTimerRef.current) clearTimeout(nowcastTimerRef.current);
+      nowcastTimerRef.current = null;
+      provider.reset();
+      weatherCellsRef.current = [];
+      setWeatherCells([]);
+      weatherEngine.reset();
+    };
+  }, [demo, running]);
 
   // -- l'unico orologio della demo -----------------------------------------
   // Avanza le celle e la fase delle animazioni. Lo stesso array di celle
