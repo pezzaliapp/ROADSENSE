@@ -91,7 +91,7 @@ alternativa occorre aggiungere esplicitamente l'origine del Worker alla CSP.
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | verso l'esterno viene inviata **solo l'origine**, mai il percorso. `no-referrer` è stato abbandonato perché impediva di identificare l'applicazione e viola la Tile Usage Policy di OpenStreetMap |
 | `X-Frame-Options` | `DENY` | anti-clickjacking (compatibilità) |
 | `Cross-Origin-Opener-Policy` | `same-origin` | isolamento del contesto di navigazione |
-| `Permissions-Policy` | `geolocation=(self), accelerometer=(self), gyroscope=(self), camera=(), microphone=(), payment=(), usb=()` | **nega esplicitamente** ciò che ROAD SENSE non usa |
+| `Permissions-Policy` | `geolocation=(self), accelerometer=(self), gyroscope=(self), camera=(), microphone=(self), payment=(), usb=()` | **nega esplicitamente** ciò che ROAD SENSE non usa, e concede a `self` soltanto ciò che usa davvero. `microphone=(self)` serve al riconoscimento vocale: con la allowlist vuota il microfono è negato all'intera origine, `SpeechRecognition` fallisce con `not-allowed` **senza mostrare alcuna richiesta** e la Permissions API riporta `denied`. Era la causa della voce inutilizzabile su Chrome Android |
 
 ---
 
