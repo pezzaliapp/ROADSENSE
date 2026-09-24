@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TEST MICROFONO - Web Speech API</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 16px;
+    background: #0b0e11; color: #e8edf2;
+    font: 14px/1.4 system-ui, -apple-system, sans-serif;
+  }
+  h1 { font-size: 15px; letter-spacing: .06em; margin: 0 0 4px; color: #ffb020; }
+  p.sub { margin: 0 0 14px; font-size: 12px; color: #8b97a5; }
+  button {
+    width: 100%; padding: 18px; font-size: 17px; font-weight: 700;
+    letter-spacing: .04em; border: 0; border-radius: 10px;
+    background: #ffb020; color: #0b0e11;
+  }
+  button:disabled { background: #2a333d; color: #8b97a5; }
+  #api { margin: 14px 0; padding: 10px 12px; border-radius: 8px; background: #14191f; font-size: 13px; }
+  #api.ok { border-left: 3px solid #3ddc84; }
+  #api.bad { border-left: 3px solid #ff4d4d; }
+  #log { margin-top: 14px; border-top: 1px solid #2a333d; }
+  .row {
+    display: flex; gap: 10px; padding: 6px 0;
+    border-bottom: 1px solid #1c232b; font-variant-numeric: tabular-nums;
+  }
+  .t { flex: 0 0 64px; color: #8b97a5; font-size: 11px; }
+  .e { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .e.ok { color: #3ddc84; }
+  .e.bad { color: #ff4d4d; }
+  .e.hi { color: #ffd23d; }
+</style>
+</head>
+<body>
+
+<h1>TEST MICROFONO</h1>
+<p class="sub">Web Speech API, nient'altro. Nessuna libreria, nessun altro permesso chiesto.</p>
+
+<div id="api">rilevamento in corso…</div>
+<button id="go" type="button">TEST MICROFONO</button>
+<div id="log"></div>
+
+<script>
+(function () {
+  var logEl = document.getElementById('log');
+  var apiEl = document.getElementById('api');
+  var btn = document.getElementById('go');
+  var t0 = Date.now();
+
+  function log(text, tone) {
+    var row = document.createElement('div');
+    row.className = 'row';
+    var t = document.createElement('span');
+    t.className = 't';
+    t.textContent = '+' + ((Date.now() - t0) / 1000).toFixed(2) + 's';
+    var e = document.createElement('span');
+    e.className = 'e' + (tone ? ' ' + tone : '');
+    e.textContent = text;
+    row.appendChild(t);
+    row.appendChild(e);
+    logEl.insertBefore(row, logEl.firstChild);
+  }
+
+  // -- rilevamento: esattamente le due forme, niente altro -------------------
+  var Native = window.SpeechRecognition;
+  var Webkit = window.webkitSpeechRecognition;
+  var SR = Native || Webkit;
+  var which = Native ? 'window.SpeechRecognition'
+            : Webkit ? 'window.webkitSpeechRecognition'
+            : 'NESSUNA';
+
+  apiEl.className = SR ? 'ok' : 'bad';
+  apiEl.textContent =
+    'API: ' + which +
+    '  |  SpeechRecognition: ' + (Native ? 'si' : 'no') +
+    '  |  webkitSpeechRecognition: ' + (Webkit ? 'si' : 'no') +
+    '  |  contesto sicuro: ' + (window.isSecureContext ? 'si' : 'NO');
+
+  if (!SR) {
+    btn.disabled = true;
+    log('API disponibile: NO', 'bad');
+    return;
+  }
+  log('API disponibile: ' + which, 'ok');
+
+  btn.addEventListener('click', function () {
+    log('click', 'hi');
+
+    var recognition = new SR();
+    recognition.lang = 'it-IT';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart      = function () { log('onstart', 'ok'); };
+    recognition.onaudiostart = function () { log('onaudiostart', 'ok'); };
+    recognition.onsoundstart = function () { log('onsoundstart', 'ok'); };
+    recognition.onspeechstart = function () { log('onspeechstart', 'ok'); };
+    recognition.onspeechend  = function () { log('onspeechend'); };
+    recognition.onsoundend   = function () { log('onsoundend'); };
+    recognition.onaudioend   = function () { log('onaudioend'); };
+
+    recognition.onresult = function (event) {
+      var text = '';
+      try {
+        text = event.results[event.resultIndex][0].transcript;
+      } catch (e) {
+        text = '(trascrizione illeggibile)';
+      }
+      log('onresult: ' + text, 'ok');
+    };
+
+    recognition.onnomatch = function () { log('onnomatch', 'hi'); };
+
+    recognition.onerror = function (event) {
+      var line = 'onerror: ' + event.error;
+      line += '  |  message: ' + (event.message ? event.message : '(vuoto)');
+      log(line, 'bad');
+    };
+
+    recognition.onend = function () { log('onend'); };
+
+    // La chiamata avviene qui, dentro il click, senza niente prima.
+    try {
+      recognition.start();
+      log('start() chiamato', 'hi');
+    } catch (err) {
+      log('start() ha sollevato: ' + (err && err.name ? err.name : String(err)) +
+          '  |  ' + (err && err.message ? err.message : '(nessun messaggio)'), 'bad');
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
