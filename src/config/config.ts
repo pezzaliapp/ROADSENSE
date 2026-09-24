@@ -310,47 +310,42 @@ export const VOICE = {
   /** Lingua del riconoscimento. */
   lang: 'it-IT',
   /**
-   * ASCOLTO INTERMITTENTE.
+   * ASCOLTO SU RICHIESTA.
    *
-   * Il primo test su iPhone ha mostrato che tenere `SpeechRecognition` sempre
-   * aperto disturba pesantemente l'audio: iOS passa a una sessione audio di
-   * registrazione e l'impianto dell'auto (Bluetooth / CarPlay) viene di fatto
-   * silenziato. Un'applicazione che ascolta non puo' impedire di ascoltare la
-   * musica.
+   * ROAD SENSE non ascolta di continuo. Un tocco su VOCE apre UNA sessione,
+   * si pronuncia il comando, la sessione si chiude. Per un'altra
+   * segnalazione serve un altro tocco.
    *
-   * ROAD SENSE quindi NON tiene il microfono aperto: ascolta a finestre e fra
-   * una finestra e l'altra RILASCIA davvero il riconoscitore.
+   * Perche' non l'ascolto permanente, che pure era l'idea iniziale:
+   * - su iPhone un riconoscitore sempre aperto tiene attiva una sessione
+   *   audio di registrazione, e l'impianto dell'auto viene silenziato;
+   * - su Android il riconoscitore si chiude da solo dopo ogni silenzio, e
+   *   riaprirlo significa far suonare il tono di attivazione ogni pochi
+   *   secondi, per tutto il viaggio.
    *
-   * ATTENZIONE - QUESTI TEMPI SONO PROVVISORI.
-   * Il ragionamento dietro i valori:
-   *
-   *   - un comando ROAD SENSE e' una frase sola ("ROAD SENSE, buca"): dura
-   *     tipicamente 2-3 secondi. Una finestra deve contenerne una intera con
-   *     margine, quindi non puo' scendere sotto i ~6 s;
-   *   - la pausa serve a iOS per chiudere la sessione di registrazione e
-   *     restituire l'audio all'impianto: troppo breve e non cambia nulla,
-   *     troppo lunga e si perdono comandi;
-   *   - chi parla durante la pausa non viene sentito. E' accettabile perche'
-   *     la parola di attivazione va comunque pronunciata e si ripete: e'
-   *     preferibile a un'app che spegne la radio.
-   *
-   * VANNO VALIDATI CON UN TEST REALE IN AUTO.
+   * Nessuna delle due si risolve con una costante. Una sessione per tocco
+   * costa un gesto e toglie entrambi i problemi.
    */
-  listen: {
-    /** Durata massima di una finestra di ascolto, ms. */
-    windowMs: 8000,
-    /** Pausa fra due finestre, con riconoscitore RILASCIATO, ms. */
-    gapMs: 1500,
+  session: {
     /**
-     * Attesa aggiuntiva dopo che ROAD SENSE ha finito di parlare, prima di
-     * riaprire il microfono. Evita che la coda della voce sintetica venga
-     * raccolta dal riconoscitore.
+     * Quanto si resta in ascolto se non succede nulla, ms.
+     *
+     * Deve bastare a pronunciare una parola con calma dopo aver toccato lo
+     * schermo - "buca" richiede meno di un secondo, ma fra il tocco e la
+     * voce passa qualche istante. Oltre, si chiude da soli invece di
+     * lasciare il microfono aperto.
      */
-    afterSpeechMs: 700,
+    timeoutMs: 10_000,
   },
   /**
-   * Parola di attivazione. Senza, ogni conversazione in auto diventerebbe una
-   * segnalazione: e' cio' che rende utilizzabile un microfono sempre acceso.
+   * Parole di attivazione, non piu' richieste.
+   *
+   * Servivano all'ascolto permanente: senza, ogni conversazione in auto
+   * sarebbe diventata una segnalazione. Con l'ascolto su richiesta il tocco
+   * su VOCE dice gia' che si sta parlando all'applicazione, e pretendere
+   * anche "ROAD SENSE" sarebbe un ostacolo senza scopo.
+   *
+   * Restano riconosciute e rimosse se pronunciate per abitudine.
    */
   wakeWords: ['road sense', 'roadsense', 'rodesense', 'rod sense'],
   /**
@@ -361,10 +356,6 @@ export const VOICE = {
   singleReportConfidence: 0.55,
   /** Durata della conferma visiva "SEGNALAZIONE RICEVUTA", ms. */
   confirmationMs: 4500,
-  /** Attesa prima di riavviare il riconoscimento dopo una pausa, ms. */
-  restartDelayMs: 400,
-  /** Riavvii consecutivi falliti oltre i quali si rinuncia. */
-  maxRestartFailures: 5,
 } as const;
 
 /**

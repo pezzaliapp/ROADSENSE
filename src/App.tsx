@@ -37,15 +37,12 @@ import { DemoVoiceProvider } from './voice/DemoVoiceProvider';
 import type { VoiceDiagnostics, VoiceProvider, VoiceStatus } from './voice/VoiceProvider';
 import type { DetectionTelemetry } from './core/DetectionEngine';
 import {
-  attemptOf,
   browserMicEnvironment,
   interpretPermission,
   readMicPermissionRaw,
-  requestMicrophone,
 } from './voice/micPermission';
 import { parseVoiceReport } from './voice/parser';
-import { buildVoiceEvent } from './voice/voiceEvent';
-import { HAZARD_META } from './hazard/taxonomy';
+import { hazardFamily, HAZARD_META } from './hazard/taxonomy';
 import { admitsAlert, assessCluster, type HazardAssessment } from './hazard/assessment';
 import { AlertSpeechEngine } from './speech/AlertSpeechEngine';
 import { BrowserSpeechProvider } from './speech/BrowserSpeechProvider';
@@ -54,7 +51,14 @@ import { roadAlertPhrase, weatherAlertPhrase } from './speech/phrases';
 import { DEMO_VOICE_SCRIPT } from './demo/demoVoiceScript';
 import { routeAheadFrom } from './demo/routeAhead';
 import type { DemoVehicleState } from './demo/DemoVehicle';
-import type { EventCluster, EventType, GeoSample, RoadEvent, SystemStatus } from './core/types';
+import type {
+  EventCluster,
+  EventSource,
+  EventType,
+  GeoSample,
+  RoadEvent,
+  SystemStatus,
+} from './core/types';
 import { backendEnabled, fetchNearby, postEvents } from './net/api';
 
 import { DemoWeatherProvider } from './weather/DemoWeatherProvider';
@@ -130,7 +134,8 @@ export default function App() {
    * browser e' per impostazione predefinita un servizio remoto, e accenderlo
    * senza chiederlo tradirebbe la promessa di privacy.
    */
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  // Lo stato della voce vive in `status.voice`: "ascolto in corso" non e' un
+  // interruttore che l'utente lascia acceso, e' la durata di una sessione.
   /**
    * Consenso all'elaborazione REMOTA dell'audio.
    *
@@ -680,85 +685,11 @@ export default function App() {
     [demo, recordEvent, sensorDebug],
   );
 
-  /**
-   * Una frase e' stata riconosciuta.
-   *
-   * Il parser decide cosa dice; qui si costruisce l'evento e si mostra una
-   * conferma VISIVA che sparisce da sola. Nessun pulsante da premere: durante
-   * la guida non si tocca nulla.
-   */
-  const handleTranscript = useCallback(
-    (transcript: string) => {
-      const parsed = parseVoiceReport(transcript);
-      if (!parsed.ok) return;
 
-      const geo = sensorRef.current?.getLastGeo() ?? null;
-      const event = buildVoiceEvent(parsed.report, geo, {
-        reporterId: getAnonId(),
-        ...(demoRef.current ? { demo: true } : {}),
-      });
-      if (!event) {
-        showToast('Segnalazione vocale ignorata: posizione non disponibile.');
-        return;
-      }
 
-      recordEvent(event);
+  // Il riconoscimento non vive piu' in un effetto: e' una sessione che nasce
+  // da un tocco e muore da sola. Vedi `startVoice`, piu' sotto.
 
-      const meta = HAZARD_META[parsed.report.hazard];
-      setVoiceReceipt(meta.label);
-      if (voiceReceiptTimerRef.current) clearTimeout(voiceReceiptTimerRef.current);
-      voiceReceiptTimerRef.current = setTimeout(
-        () => setVoiceReceipt(null),
-        VOICE.confirmationMs,
-      );
-    },
-    [recordEvent, showToast],
-  );
-
-  // -- riconoscimento vocale: solo durante il monitoraggio, solo se attivato
-  useEffect(() => {
-    if (!running || !voiceEnabled) return;
-
-    const provider: VoiceProvider = demo
-      ? new DemoVoiceProvider(DEMO_VOICE_SCRIPT)
-      // L'elaborazione remota parte SOLO con consenso esplicito.
-      : new BrowserVoiceProvider(voiceConsent === 'granted');
-    voiceRef.current = provider;
-
-    const caps = provider.capabilities();
-    if (!caps.supported) {
-      setStatus((s) => ({ ...s, voice: 'unsupported' }));
-      return;
-    }
-
-    // Il motore della voce parlata deve poter chiudere questo riconoscitore.
-    speechRef.current.setHandlers({ onSpeakingChange: handleSpeakingChange });
-
-    provider.start({
-      onTranscript: handleTranscript,
-      onStatus: handleVoiceStatus,
-      // Raccolta solo quando il pannello e' aperto: a regime non esiste.
-      ...(voiceDebug ? { onDiagnostics: pushDiagnostics } : {}),
-    });
-
-    return () => {
-      // STOP deve garantire che non resti NESSUN riconoscitore attivo: senza
-      // questo, su iOS la sessione audio resterebbe aperta e l'impianto
-      // dell'auto muto anche a monitoraggio fermo.
-      provider.stop();
-      voiceRef.current = null;
-    };
-  }, [
-    running,
-    voiceEnabled,
-    demo,
-    voiceConsent,
-    handleTranscript,
-    voiceDebug,
-    pushDiagnostics,
-    handleVoiceStatus,
-    handleSpeakingChange,
-  ]);
 
   /**
    * Fotografia iniziale della catena, con ?debugVoice=1.
@@ -768,7 +699,7 @@ export default function App() {
   useEffect(() => {
     if (!voiceDebug) return;
     pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() });
-  }, [voiceDebug, pushDiagnostics, voiceEnabled, running]);
+  }, [voiceDebug, pushDiagnostics, running]);
 
   /**
    * Lettura passiva del permesso del microfono, sempre attiva.
@@ -793,15 +724,16 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [pushDiagnostics, voiceEnabled, running]);
+  }, [pushDiagnostics, running]);
 
   /**
-   * Stato della voce a monitoraggio fermo.
-   * Distingue "il browser non puo'" da "non attivata" da "attivata, partira'
-   * con START": sono tre cose diverse e vanno dette.
+   * Stato della voce fuori da una sessione.
+   *
+   * Distingue "il browser non puo'" da "in attesa di consenso" da "pronta":
+   * tre cose diverse, e chi guida deve poterle distinguere senza indagare.
+   * Durante una sessione lo stato lo detta il provider.
    */
   useEffect(() => {
-    if (running) return;
     const supported = demo || new BrowserVoiceProvider().capabilities().supported;
     if (!supported) {
       setStatus((s) => ({ ...s, voice: 'unsupported' }));
@@ -811,85 +743,11 @@ export default function App() {
       setStatus((s) => ({ ...s, voice: 'consent' }));
       return;
     }
-    setStatus((s) => ({ ...s, voice: voiceEnabled ? 'ready' : 'off' }));
-  }, [voiceEnabled, running, demo, voiceConsent]);
+    setStatus((s) => (s.voice === 'listening' ? s : { ...s, voice: 'ready' }));
+  }, [demo, voiceConsent]);
 
-  /**
-   * Accende e spegne la voce.
-   *
-   * Se il browser non elabora l'audio sul dispositivo servono DUE tocchi: il
-   * primo spiega cosa accadrebbe, il secondo lo autorizza. Finche' il consenso
-   * non arriva il microfono NON viene acceso - il provider si rifiuta proprio
-   * di partire - e l'indicatore mostra "VOCE ?" invece di dichiarare
-   * un'attivazione che non c'e' stata.
-   */
-  const toggleVoice = useCallback(async () => {
-    if (voiceEnabled) {
-      setVoiceEnabled(false);
-      return;
-    }
+  // `startVoice` e' definita dopo `handleTranscript`, che le serve.
 
-    // In demo la voce e' recitata: nessun microfono, nessun audio, nulla da
-    // autorizzare.
-    if (demo) {
-      setVoiceEnabled(true);
-      return;
-    }
-
-    // Verifica del supporto: sincrona, non cede il controllo al browser.
-    const caps = new BrowserVoiceProvider().capabilities();
-    if (!caps.supported) return;
-
-    // Primo tocco senza elaborazione locale confermata: si chiede il consenso
-    // all'elaborazione remota e non si accende niente. E' una decisione su
-    // DOVE finisce l'audio, diversa e separata dal permesso del microfono.
-    if (!caps.onDevice && voiceConsent === 'none') {
-      setVoiceConsent('pending');
-      showToast(
-        "Questo browser non elabora la voce sul dispositivo: l'audio verrebbe inviato a un servizio esterno. Tocca di nuovo VOCE per accettare.",
-      );
-      return;
-    }
-    const remote = !caps.onDevice;
-    if (remote && voiceConsent !== 'granted') setVoiceConsent('granted');
-
-    // >>> NESSUN await sopra questa riga. <<<
-    // Questo e' il primo `recognition.start()`, e deve avvenire dentro
-    // l'attivazione di QUESTO tocco: su Android e' la chiamata che fa
-    // comparire la richiesta del microfono. Ne' la Permissions API ne'
-    // getUserMedia la precedono: non sono permessi per SpeechRecognition,
-    // sono informazioni, e un'informazione non puo' impedire un tentativo.
-    const primer = new BrowserVoiceProvider(remote);
-    primer.prime({
-      onStatus: handleVoiceStatus,
-      onDiagnostics: pushDiagnostics,
-    });
-    setVoiceEnabled(true);
-    if (remote) {
-      showToast(
-        "Voce attiva. L'audio e' elaborato da un servizio esterno del browser, non da ROAD SENSE.",
-      );
-    }
-
-    // Da qui in poi si puo' attendere: sono dati per la diagnosi e per la
-    // sessione successiva, non condizioni di avvio.
-    void probeOnDevice().then(() =>
-      pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() }),
-    );
-    if (voiceDebug) {
-      // Solo in diagnosi: serve a confrontare cio' che dichiara il permesso
-      // con cio' che fa davvero il microfono. Non autorizza niente.
-      const mic = await requestMicrophone(browserMicEnvironment(), { force: true });
-      pushDiagnostics({
-        mic: mic.permission,
-        getUserMedia: attemptOf(mic),
-        getUserMediaDetail: mic.errorName,
-        ...(mic.permissionRaw && mic.permissionRaw !== 'non disponibile'
-          ? { permissionsValue: mic.permissionRaw }
-          : {}),
-      });
-    }
-  }, [voiceEnabled, demo, voiceConsent, showToast, pushDiagnostics, voiceDebug, handleVoiceStatus]);
 
   // -- START / STOP ---------------------------------------------------------
   const start = useCallback(async () => {
@@ -941,8 +799,15 @@ export default function App() {
   }, []);
 
   // -- segnalazione manuale -------------------------------------------------
+  /**
+   * Registra una segnalazione fatta da una persona.
+   *
+   * UNICO percorso per il pulsante SEGNALA e per la voce: non esistono due
+   * logiche parallele. `source` dice soltanto come e' arrivata - una voce e
+   * un tocco sono la stessa segnalazione, e devono produrre lo stesso evento.
+   */
   const report = useCallback(
-    (type: EventType) => {
+    (type: EventType, source: EventSource = 'manual') => {
       setSheetOpen(false);
       const geo = sensorRef.current?.getLastGeo();
 
@@ -963,7 +828,10 @@ export default function App() {
         ts: Date.now(),
         type,
         severity: 2,
-        source: 'manual',
+        // Voce e pulsante sono la stessa segnalazione, fatta in due modi:
+        // stessa posizione, stessa severita', stessa confidenza. Cambia solo
+        // come e' stata raccolta, e quello va registrato com'e'.
+        source,
         // Una persona ha visto il pericolo: confidenza singola alta, ma la
         // fiducia della zona resta compito del ConfidenceEngine.
         confidence: 0.8,
@@ -975,6 +843,131 @@ export default function App() {
       showToast('Segnalazione registrata.');
     },
     [demo, recordEvent, showToast],
+  );
+
+  /**
+   * Una frase e' stata riconosciuta.
+   *
+   * Il parser decide cosa dice; qui si costruisce l'evento e si mostra una
+   * conferma VISIVA che sparisce da sola. Nessun pulsante da premere: durante
+   * la guida non si tocca nulla.
+   */
+  const handleTranscript = useCallback(
+    (transcript: string) => {
+      // Nessuna parola di attivazione: il tocco su VOCE dice gia' che si sta
+      // parlando all'applicazione. Pretendere anche "ROAD SENSE" sarebbe un
+      // ostacolo senza scopo, e sul campo era la ragione per cui dire
+      // "buca" non produceva nulla.
+      const parsed = parseVoiceReport(transcript, { requireWakeWord: false });
+
+      if (!parsed.ok) {
+        // Un fallimento muto e' indistinguibile da un microfono che non
+        // sente: si dice sempre cos'e' successo.
+        if (parsed.reason === 'not-understood') {
+          showToast(`Non ho capito "${transcript.trim()}". Tocca VOCE e riprova.`);
+        } else if (parsed.reason === 'no-wake-word') {
+          showToast('Non ho capito. Tocca VOCE e di\' il pericolo, per esempio "buca".');
+        }
+        return;
+      }
+
+      // STESSO percorso del pulsante SEGNALA: una sola funzione, una sola
+      // logica. Cambia solo come la segnalazione e' arrivata.
+      report(hazardFamily(parsed.report.hazard), 'voice');
+
+      const meta = HAZARD_META[parsed.report.hazard];
+      setVoiceReceipt(meta.label);
+      if (voiceReceiptTimerRef.current) clearTimeout(voiceReceiptTimerRef.current);
+      voiceReceiptTimerRef.current = setTimeout(
+        () => setVoiceReceipt(null),
+        VOICE.confirmationMs,
+      );
+    },
+    [report, showToast],
+  );
+
+  /**
+   * Apre UNA sessione di ascolto.
+   *
+   *   tocco su VOCE -> ascolto -> "buca" -> segnalazione -> microfono chiuso
+   *
+   * Per un'altra segnalazione serve un altro tocco. Nessun riavvio
+   * automatico, nessun ascolto permanente: sono le due cose che rendevano il
+   * microfono inutilizzabile: su iPhone silenziavano l'impianto dell'auto, su
+   * Android facevano suonare il tono di attivazione ogni pochi secondi.
+   *
+   * Non dipende da velocita', movimento, sensori o monitoraggio attivo: si
+   * puo' segnalare anche da fermi, esattamente come col pulsante SEGNALA.
+   */
+  const startVoice = useCallback(() => {
+    // Sessione gia' aperta: un secondo tocco non apre un secondo microfono.
+    if (voiceRef.current?.isListening?.()) return;
+
+    // In demo la voce e' recitata: nessun microfono, nulla da autorizzare.
+    if (demo) {
+      const recita = new DemoVoiceProvider(DEMO_VOICE_SCRIPT);
+      voiceRef.current = recita;
+      recita.start({ onTranscript: handleTranscript, onStatus: handleVoiceStatus });
+      return;
+    }
+
+    // Verifica del supporto: sincrona, non cede il controllo al browser.
+    const caps = new BrowserVoiceProvider().capabilities();
+    if (!caps.supported) {
+      setStatus((st) => ({ ...st, voice: 'unsupported' }));
+      return;
+    }
+
+    // Primo tocco senza elaborazione locale confermata: si chiede il consenso
+    // all'invio dell'audio a un servizio esterno. E' una decisione su DOVE
+    // finisce la voce, e resta separata dal permesso del microfono.
+    if (!caps.onDevice && voiceConsent === 'none') {
+      setVoiceConsent('pending');
+      showToast(
+        "Questo browser non elabora la voce sul dispositivo: l'audio verrebbe inviato a un servizio esterno. Tocca di nuovo VOCE per accettare.",
+      );
+      return;
+    }
+    const remote = !caps.onDevice;
+    if (remote && voiceConsent !== 'granted') setVoiceConsent('granted');
+
+    // >>> NESSUN await sopra questa riga. <<<
+    // `start()` arriva a `recognition.start()` senza cedere il controllo: su
+    // Android e' quella chiamata a far comparire la richiesta del microfono,
+    // e un'attesa interposta farebbe decadere l'attivazione del tocco.
+    const provider = new BrowserVoiceProvider(remote);
+    voiceRef.current = provider;
+    // La voce parlata deve poter chiudere questa sessione mentre parla.
+    speechRef.current.setHandlers({ onSpeakingChange: handleSpeakingChange });
+    provider.start({
+      onTranscript: handleTranscript,
+      onStatus: handleVoiceStatus,
+      ...(voiceDebug ? { onDiagnostics: pushDiagnostics } : {}),
+    });
+
+    // Da qui in poi si puo' attendere: sono dati per la diagnosi e per la
+    // sessione successiva, non condizioni di avvio.
+    void probeOnDevice().then(() =>
+      pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() }),
+    );
+  }, [
+    demo,
+    voiceConsent,
+    showToast,
+    handleTranscript,
+    handleVoiceStatus,
+    handleSpeakingChange,
+    pushDiagnostics,
+    voiceDebug,
+  ]);
+
+  // Allo smontaggio nessuna sessione deve restare aperta.
+  useEffect(
+    () => () => {
+      voiceRef.current?.stop();
+      voiceRef.current = null;
+    },
+    [],
   );
 
   // -- pulizia timer --------------------------------------------------------
@@ -1041,7 +1034,9 @@ export default function App() {
         running={running}
         demo={demo}
         // Attivabile solo da fermi: durante la guida non si tocca nulla.
-        {...(running ? {} : { onToggleVoice: toggleVoice })}
+        // Toccabile SEMPRE: una segnalazione vocale e' un gesto come premere
+        // SEGNALA, e deve funzionare anche in marcia e da fermi.
+        onToggleVoice={startVoice}
       />
 
       {updateReady && (

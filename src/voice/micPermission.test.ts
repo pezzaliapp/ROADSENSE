@@ -305,39 +305,33 @@ describe('esito letterale di getUserMedia, per la diagnosi', () => {
 
 describe('vincoli strutturali', () => {
   const app = readFileSync(resolve(ROOT, 'src/App.tsx'), 'utf8');
-  const toggle = app.slice(
-    app.indexOf('const toggleVoice = useCallback'),
-    app.indexOf('// -- START / STOP'),
-  );
-  const senzaCommenti = toggle.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const inizio = app.indexOf('const startVoice = useCallback');
+  const avvio = app.slice(inizio, app.indexOf('  }, [', inizio));
+  const senzaCommenti = avvio.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
-  it('il primo recognition.start() avviene dentro il gesto', () => {
-    // `prime()` e' sincrona fino a `recognition.start()`. Fra l'inizio del
-    // tocco e quella chiamata non ci deve essere NESSUN `await`: su Android
-    // e' cio' che fa comparire la richiesta del microfono, e un'attesa fa
-    // decadere l'attivazione del gesto.
-    const prime = senzaCommenti.indexOf('primer.prime(');
-    expect(prime).toBeGreaterThan(-1);
-    expect(senzaCommenti.slice(0, prime)).not.toMatch(/\bawait\b/);
+  it('recognition.start() avviene dentro il gesto', () => {
+    // `provider.start()` e' sincrona fino a `recognition.start()`: fra il
+    // tocco e quella chiamata non ci deve essere nessun `await`, altrimenti
+    // su Android l'attivazione decade e il microfono viene rifiutato senza
+    // mostrare nulla.
+    const start = senzaCommenti.indexOf('provider.start(');
+    expect(start).toBeGreaterThan(-1);
+    expect(senzaCommenti.slice(0, start)).not.toMatch(/\bawait\b/);
   });
 
-  it('ne\' Permissions API ne\' getUserMedia precedono il riconoscitore', () => {
-    // Sono informazioni, non permessi per SpeechRecognition: non possono
-    // impedire un tentativo, e infatti vengono dopo.
-    const prime = senzaCommenti.indexOf('primer.prime(');
-    const gum = senzaCommenti.indexOf('requestMicrophone(');
-    const perm = senzaCommenti.indexOf('readMicPermissionRaw(');
-    if (gum > -1) expect(gum).toBeGreaterThan(prime);
-    if (perm > -1) expect(perm).toBeGreaterThan(prime);
+  it('ne\' Permissions API ne\' getUserMedia entrano nel percorso della voce', () => {
+    // Non sono permessi per SpeechRecognition: sono informazioni, e
+    // un'informazione non puo' impedire un tentativo.
+    expect(senzaCommenti).not.toMatch(/requestMicrophone|readMicPermission|permissions\.query/);
   });
 
-  it('getUserMedia viene usata SOLO nel percorso di diagnosi', () => {
-    const gum = senzaCommenti.indexOf('requestMicrophone(');
-    expect(gum).toBeGreaterThan(-1);
-    // Deve stare dentro il blocco `if (voiceDebug)`.
-    const debugBlock = senzaCommenti.indexOf('if (voiceDebug)');
-    expect(debugBlock).toBeGreaterThan(-1);
-    expect(gum).toBeGreaterThan(debugBlock);
+  it('getUserMedia non viene piu\' CHIAMATA da nessuna parte in App', () => {
+    // Le uniche occorrenze rimaste sono i campi del pannello di diagnosi,
+    // che ora riportano sempre "non tentato": e' la verita'.
+    const codice = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(codice).not.toMatch(/requestMicrophone\(/);
+    expect(codice).not.toMatch(/getUserMedia\(/);
+    expect(codice).not.toMatch(/browserMicEnvironment\(\)[\s\S]{0,40}requestMicrophone/);
   });
 
   it('il consenso all\'elaborazione remota resta una decisione separata', () => {
@@ -352,14 +346,5 @@ describe('vincoli strutturali', () => {
   it('nessuna soglia temporale nel codice del permesso', () => {
     const modulo = readFileSync(resolve(ROOT, 'src/voice/micPermission.ts'), 'utf8');
     expect(modulo).not.toMatch(/\bnow\(\)|Date\.now|PROMPT_MIN_MS|elapsed|startedAt|setTimeout/);
-  });
-
-  it('la forzatura vive SOLO nel percorso di diagnosi', () => {
-    const usi = app.match(/force:\s*\w+/g) ?? [];
-    expect(usi).toEqual(['force: true']);
-    // E quell'unico uso sta dentro il blocco di diagnosi.
-    expect(senzaCommenti.indexOf('force: true')).toBeGreaterThan(
-      senzaCommenti.indexOf('if (voiceDebug)'),
-    );
   });
 });

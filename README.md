@@ -290,7 +290,15 @@ Dettagli completi: [PRIVACY.md](PRIVACY.md).
 
 ## ROAD SENSE ZERO TOUCH
 
-L'obiettivo: **premere START prima di partire e non toccare più il telefono.**
+L'obiettivo: **premere START prima di partire e non toccare più il telefono** —
+raggiunto per il rilevamento automatico e per gli avvisi.
+
+> **La segnalazione vocale fa eccezione, e va detto.** Richiede un tocco su
+> **VOCE**: una sessione, una frase, microfono chiuso. L'ascolto permanente è
+> stato provato e abbandonato — su iPhone teneva aperta una sessione audio di
+> registrazione e silenziava l'impianto dell'auto, su Android riapriva il
+> microfono ogni secondo e mezzo facendo suonare il tono di attivazione.
+> Nessuna delle due si risolveva con una costante.
 
 ```
 SENSORI        rilevano ciò che possono misurare
@@ -361,8 +369,8 @@ pronuncia come tali.
 | App aperta, schermo bloccato | ❌ | ❌ | ❌ |
 | App in secondo piano | ❌ | ❌ | ❌ |
 | PWA installata, in background | ❌ | ❌ | ❌ |
-| Android / Chrome | ✅ | ✅ riavvio automatico dopo ogni pausa | ✅ |
-| iOS / Safari e PWA | ✅ ma serve un tocco per i sensori di movimento | ⚠️ si chiude quasi sempre dopo una frase | ✅ dopo il primo gesto utente |
+| Android / Chrome | ✅ | ✅ una sessione per tocco su VOCE | ✅ |
+| iOS / Safari e PWA | ✅ ma serve un tocco per i sensori di movimento | ✅ una sessione per tocco su VOCE | ✅ dopo il primo gesto utente |
 
 > **ZERO TOUCH oggi significa «senza toccare il telefono», non «con il telefono
 > in tasca».** ROAD SENSE deve restare aperto e in primo piano, con lo schermo
@@ -376,7 +384,8 @@ pronuncia come tali.
 |---|---|
 | **L'audio può lasciare il dispositivo** | Il riconoscimento dei browser è per impostazione predefinita un **servizio remoto**. ROAD SENSE chiede l'elaborazione locale dove il browser la offre (`processLocally`). Se non c'è, **il microfono non si accende** finché non arriva un consenso esplicito in due tocchi (vedi PRIVACY.md per il testo esatto) |
 | **Niente microfono in background** | Nessun browser ascolta a schermo spento o con l'app in secondo piano. ZERO TOUCH significa «senza toccare il telefono», non «con il telefono in tasca» |
-| **L'ascolto continuo si interrompe** | `continuous` non è garantito: su Android si chiude dopo il silenzio, su iOS quasi sempre dopo una frase. ROAD SENSE riavvia automaticamente, ed è il massimo ottenibile in una PWA |
+| **La voce NON è più a mani libere** | Ogni segnalazione vocale richiede un tocco su **VOCE**: si apre una sessione, si dice il pericolo, il microfono si chiude. Tenere il microfono sempre aperto si è rivelato impraticabile sul campo — su iPhone silenziava l'impianto dell'auto, su Android faceva suonare il tono di attivazione ogni secondo e mezzo. Un tocco è il prezzo di un comportamento prevedibile |
+| **Nessuna parola di attivazione** | Dopo il tocco basta dire il pericolo: **«buca»**. Non serve più dire «ROAD SENSE». La parola resta riconosciuta se pronunciata per abitudine |
 | **Firefox non supporta il riconoscimento** | Indicatore `VOCE --`, tutto il resto funziona |
 | **Serve rete** | Con riconoscimento remoto, offline la voce non funziona |
 

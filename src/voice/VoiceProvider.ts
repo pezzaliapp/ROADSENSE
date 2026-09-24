@@ -136,6 +136,11 @@ export interface VoiceProvider {
   start(handlers: VoiceHandlers): void;
   stop(): void;
   /**
+   * Una sessione e' in ascolto in questo momento.
+   * Serve a impedire che un secondo tocco apra un secondo microfono.
+   */
+  isListening?(): boolean;
+  /**
    * Rilascia il riconoscitore perche' ROAD SENSE sta per parlare.
    *
    * Senza questo, la voce sintetica finirebbe nel microfono e potrebbe essere

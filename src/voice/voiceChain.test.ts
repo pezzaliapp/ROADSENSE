@@ -227,7 +227,10 @@ describe('degradazione senza riconoscimento vocale', () => {
     expect(creati[0]!.processLocally).toBe(false);
   });
 
-  it('se il motore locale rifiuta la lingua si ripiega sul remoto, una volta sola', async () => {
+  it('se il motore locale rifiuta la lingua, la sessione si chiude senza riprovare', async () => {
+    // Prima ROAD SENSE ripiegava da solo sull'elaborazione remota. Ora non
+    // riavvia mai niente: si chiude e lo dichiara, e per riprovare serve un
+    // nuovo tocco su VOCE.
     const istanze: Array<Record<string, unknown>> = [];
     class Motore {
       lang = '';
@@ -257,22 +260,14 @@ describe('degradazione senza riconoscimento vocale', () => {
     expect(istanze).toHaveLength(1);
     expect(istanze[0]!.processLocally).toBe(true);
 
-    // Il motore locale dichiara di non avere la lingua.
     (istanze[0]!.onerror as (e: { error: string }) => void)({
       error: 'language-not-supported',
     });
 
-    // Secondo tentativo, remoto, senza processLocally.
-    expect(istanze).toHaveLength(2);
-    expect(istanze[1]!.processLocally).toBe(false);
+    // Nessun secondo tentativo automatico.
+    expect(istanze).toHaveLength(1);
     expect(onDeviceStateNow()).toBe('no');
-
-    // Un secondo rifiuto NON produce un terzo tentativo: si rinuncia.
-    (istanze[1]!.onerror as (e: { error: string }) => void)({
-      error: 'language-not-supported',
-    });
-    expect(istanze).toHaveLength(2);
-    expect(stati.at(-1)).toBe('error');
+    expect(stati.at(-1)).toBe('off');
   });
 
   it('senza consenso remoto il rifiuto locale spegne la voce, non la dichiara guasta', async () => {
@@ -308,18 +303,19 @@ describe('degradazione senza riconoscimento vocale', () => {
     expect(stati.at(-1)).toBe('off');
   });
 
-  it('ogni errore previsto dalle specifiche ha un esito dichiarato', async () => {
+  it('ogni errore previsto dalle specifiche chiude la sessione con un esito dichiarato', async () => {
     const casi: Array<[string, string | null]> = [
       ['not-allowed', 'denied'],
       ['service-not-allowed', 'denied'],
       ['language-not-supported', 'error'],
       ['phrases-not-supported', 'error'],
       ['bad-grammar', 'error'],
-      // Transitori: non chiudono la sessione, si riprova.
-      ['no-speech', null],
-      ['aborted', null],
-      ['audio-capture', null],
-      ['network', null],
+      // Non sono guasti, ma chiudono comunque la sessione: con l'ascolto su
+      // richiesta non esiste piu' un "si riprova da soli".
+      ['no-speech', 'off'],
+      ['aborted', 'off'],
+      ['audio-capture', 'off'],
+      ['network', 'off'],
     ];
 
     for (const [errore, atteso] of casi) {
@@ -556,7 +552,15 @@ describe('consenso all\'elaborazione remota dell\'audio', () => {
   });
 
   it('in demo non serve alcun consenso: nulla lascia il dispositivo', () => {
-    expect(app).toMatch(/if \(demo\) \{\s*setVoiceEnabled\(true\);/);
+    // La demo recita una traccia: nessun microfono, nessun audio, niente da
+    // autorizzare. Il ramo esce prima di qualsiasi consenso.
+    const inizio = app.indexOf('const startVoice = useCallback');
+    const corpo = app.slice(inizio, app.indexOf('  }, [', inizio));
+    const demo = corpo.indexOf('if (demo)');
+    const consenso = corpo.indexOf('voiceConsent');
+    expect(demo).toBeGreaterThan(-1);
+    expect(demo).toBeLessThan(consenso);
+    expect(corpo).toMatch(/new DemoVoiceProvider/);
   });
 });
 

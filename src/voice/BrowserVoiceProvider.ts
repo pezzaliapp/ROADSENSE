@@ -26,43 +26,33 @@
  * chiede con `availableOnDevice()`, che e' asincrona; finche' non risponde
  * "available" l'elaborazione locale NON viene data per buona.
  *
- * ASCOLTO INTERMITTENTE, NON CONTINUO
+ * ASCOLTO SU RICHIESTA: UNA SESSIONE PER TOCCO
  *
- * Il primo test in auto ha mostrato un problema che nessun test da scrivania
- * poteva rivelare: su iPhone, con ROAD SENSE in ascolto, l'audio dell'impianto
- * dell'auto veniva praticamente azzerato.
+ * Un tocco su VOCE apre UNA sessione, si pronuncia il comando, la sessione
+ * si chiude. Non esiste alcun riavvio automatico.
  *
- * La causa e' il modello audio di iOS. Un `SpeechRecognition` aperto tiene
- * attiva una sessione audio di REGISTRAZIONE; il sistema abbassa o dirotta la
- * riproduzione, e su Bluetooth / CarPlay il profilo passa da musica a
- * comunicazione. Tenere il riconoscitore aperto per tutto il viaggio - che e'
- * quello che faceva il riavvio automatico immediato - significa tenere quella
- * sessione aperta per tutto il viaggio.
+ * Perche' si e' arrivati qui. Le due strade precedenti hanno fallito sul
+ * campo, ciascuna su una piattaforma diversa:
  *
- * Un'app che ascolta non puo' impedire di ascoltare la musica. Quindi ROAD
- * SENSE NON monopolizza il microfono:
+ *   ascolto continuo    su iPhone tiene attiva una sessione audio di
+ *                       REGISTRAZIONE per tutto il viaggio: iOS dirotta la
+ *                       riproduzione e l'impianto dell'auto resta muto.
  *
- *   finestra di ascolto  ->  stop()  ->  RILASCIO REALE  ->  pausa  ->  ...
+ *   ascolto a finestre  su Android il riconoscitore si chiude da solo a ogni
+ *                       silenzio; riaprirlo fa suonare il tono di
+ *                       attivazione a ripetizione. Nel test sul Samsung Fold
+ *                       era un tono ogni secondo e mezzo, ininterrotto.
  *
- * Fra una finestra e l'altra il riconoscitore non e' soltanto fermo: viene
- * scartato, i suoi ascoltatori staccati, e non ne esiste nessuno vivo. E'
- * quello che permette a iOS di chiudere la sessione di registrazione.
+ * Nessuna delle due si aggiusta con una costante: il problema e' tenere il
+ * microfono aperto quando nessuno sta parlando. Una sessione per tocco lo
+ * elimina. Il prezzo e' dichiarato: le segnalazioni vocali non sono piu' a
+ * mani libere. Serve un tocco - lo stesso del pulsante SEGNALA, con in piu'
+ * la possibilita' di dire cosa si e' visto.
  *
- * Il prezzo e' dichiarato: una frase pronunciata durante la pausa non viene
- * sentita. E' accettabile perche' la parola di attivazione va comunque detta e
- * si ripete, ed e' preferibile a un'app che spegne la radio.
- *
- * QUANDO ROAD SENSE PARLA
- * Il riconoscitore viene rilasciato anche prima di ogni avviso parlato, e
- * riaperto dopo. Serve a due cose: evitare che la voce sintetica rientri dal
- * microfono e venga scambiata per una segnalazione, ed evitare che sintesi e
- * riconoscimento si contendano la sessione audio.
- *
- * UN SOLO RICONOSCITORE PER VOLTA
- * Ogni finestra crea un'istanza nuova. Le istanze vecchie vengono staccate e
- * abortite, e i loro eventi ignorati tramite un contatore di generazione: un
- * evento in ritardo di un riconoscitore gia' chiuso non deve poter riaprire il
- * ciclo o produrre una segnalazione.
+ * UNA SOLA TRASCRIZIONE PER SESSIONE
+ * Alla prima frase utile la sessione si chiude. Un riconoscitore che
+ * consegna due volte lo stesso risultato - capita su Android - non puo'
+ * produrre due segnalazioni.
  */
 
 import { VOICE } from '../config/config';
@@ -207,48 +197,32 @@ const FATAL_ERRORS = new Set([
   'bad-grammar',
 ]);
 
-/** Errori normali in auto: silenzio e chiusure volute non sono guasti. */
-const BENIGN_ERRORS = new Set(['no-speech', 'aborted']);
-
 export class BrowserVoiceProvider implements VoiceProvider {
   readonly id = 'browser-voice';
   readonly label = 'Riconoscimento del browser';
 
   private recognition: RecognitionLike | null = null;
   private handlers: VoiceHandlers = {};
-  /** Il provider e' stato avviato e non ancora fermato. */
+  /** Una sessione e' aperta in questo momento. */
   private active = false;
-  /** Sospeso perche' ROAD SENSE sta parlando. */
-  private suspended = false;
-  /** La pagina non e' visibile: nessun ascolto, nessuna sessione audio. */
-  private hidden = false;
-  /** Una sola finestra di prova, poi ci si ferma (uso dal tocco su VOCE). */
-  private primeOnly = false;
-  private failures = 0;
   /**
-   * Generazione del riconoscitore corrente.
-   *
-   * Ogni rilascio la incrementa. Gli ascoltatori catturano la propria, e un
-   * evento che arriva in ritardo da un riconoscitore gia' chiuso viene
-   * ignorato: senza questo, un `end` tardivo riaprirebbe il ciclo e potrebbero
-   * esistere due riconoscitori insieme.
+   * La sessione ha gia' consegnato una frase.
+   * Un risultato in piu' - duplicato dal browser, o arrivato mentre si
+   * chiude - viene ignorato: una pronuncia, una segnalazione.
+   */
+  private delivered = false;
+  /**
+   * Generazione della sessione corrente.
+   * Ogni rilascio la incrementa: un evento in ritardo da un riconoscitore
+   * gia' chiuso non puo' produrre una segnalazione fantasma.
    */
   private generation = 0;
-  private windowTimer: ReturnType<typeof setTimeout> | null = null;
-  private gapTimer: ReturnType<typeof setTimeout> | null = null;
-  private unsubscribeVisibility: (() => void) | null = null;
+  private timeoutTimer: ReturnType<typeof setTimeout> | null = null;
   /** Traccia degli ultimi eventi, per la diagnosi. */
   private trail: string[] = [];
   /** Il tentativo in corso ha chiesto l'elaborazione locale? */
   private usingLocal = false;
-  /** Il ripiego su elaborazione remota e' gia' stato tentato? Una volta sola. */
-  private fellBack = false;
 
-  /**
-   * @param allowRemote consenso esplicito a far elaborare l'audio da un
-   * servizio remoto, quando l'elaborazione locale non e' disponibile.
-   * @param env ambiente osservabile; iniettabile per i test.
-   */
   constructor(
     private readonly allowRemote: boolean = false,
     private readonly env: VoiceEnvironment = browserVoiceEnvironment(),
@@ -257,25 +231,30 @@ export class BrowserVoiceProvider implements VoiceProvider {
   capabilities(): VoiceCapabilities {
     const ctor = this.env.ctor();
     if (!ctor) return { supported: false, onDevice: false };
-    // onDevice = "confermata", non "forse". La differenza e' l'intera diagnosi
-    // del Samsung Fold: l'opzione esisteva, il modello no.
     return { supported: true, onDevice: onDeviceState === 'si' };
   }
 
+  /** true mentre una sessione e' in ascolto. */
+  isListening(): boolean {
+    return this.active;
+  }
+
   /**
-   * Avvia il ciclo di ascolto intermittente.
+   * Apre UNA sessione di ascolto.
    *
-   * SINCRONA FINO A `recognition.start()`, di proposito. Su Android il
-   * permesso del microfono viene concesso a `SpeechRecognition` solo se la
-   * chiamata avviene dentro l'attivazione del tocco: qualunque `await`
-   * interposto la fa decadere, e il browser rifiuta senza mostrare nulla.
-   * Per questo qui non si interroga la Permissions API, non si chiama
-   * `getUserMedia` e non si attende niente.
+   * SINCRONA FINO A `recognition.start()`, di proposito: su Android il
+   * permesso del microfono viene concesso solo se la chiamata avviene dentro
+   * l'attivazione del tocco. Nessun `await`, nessuna Permissions API e
+   * nessun `getUserMedia` la precedono.
+   *
+   * Un secondo tocco mentre la sessione e' gia' aperta non fa nulla: non si
+   * aprono due microfoni.
    */
   start(handlers: VoiceHandlers): void {
     if (this.active) return;
     this.handlers = handlers;
     this.trail = [];
+    this.delivered = false;
     this.report({ lastError: null, events: '' });
 
     const ctor = this.env.ctor();
@@ -286,7 +265,7 @@ export class BrowserVoiceProvider implements VoiceProvider {
       return;
     }
     const caps = this.capabilities();
-    // Nessuna elaborazione locale CONFERMATA e nessun consenso all'invio
+    // Nessuna elaborazione locale confermata e nessun consenso all'invio
     // dell'audio: non si parte. Meglio nessuna voce che una promessa tradita.
     if (!caps.onDevice && !this.allowRemote) {
       this.phase('idle');
@@ -295,75 +274,43 @@ export class BrowserVoiceProvider implements VoiceProvider {
     }
 
     this.active = true;
-    this.suspended = false;
-    this.hidden = false;
-    this.failures = 0;
-    this.fellBack = false;
-    this.unsubscribeVisibility = this.env.onVisibilityChange(() => this.handleVisibility());
-    this.openWindow(ctor, caps.onDevice);
+    this.open(ctor, caps.onDevice);
   }
 
-  /**
-   * Una sola finestra, per ottenere il permesso e sapere se il motore parte.
-   *
-   * Serve al tocco su VOCE, quando il monitoraggio non e' ancora attivo: apre
-   * il riconoscitore dentro il gesto dell'utente - che e' cio' che fa comparire
-   * la richiesta del microfono su Android - e lo chiude appena si sa com'e'
-   * andata. Non resta niente in ascolto.
-   */
-  prime(handlers: VoiceHandlers): void {
-    this.primeOnly = true;
-    this.start(handlers);
-  }
-
+  /** Chiude la sessione. Sicura anche se non ce n'e' una aperta. */
   stop(): void {
+    this.clearTimer();
+    const era = this.active;
     this.active = false;
-    this.suspended = false;
-    this.primeOnly = false;
-    this.clearTimers();
     this.release();
-    this.unsubscribeVisibility?.();
-    this.unsubscribeVisibility = null;
-    this.phase('ended');
+    if (era) this.phase('idle');
+    this.emit('off');
     this.handlers = {};
   }
 
   /**
-   * ROAD SENSE sta per parlare: il riconoscitore viene RILASCIATO, non solo
-   * ignorato. Cosi' la voce sintetica non puo' rientrare dal microfono, e su
-   * iOS sintesi e riconoscimento non si contendono la sessione audio.
+   * ROAD SENSE sta per parlare: la sessione si chiude.
+   * Senza riavvio - per segnalare di nuovo serve un tocco, come sempre.
    */
   pause(): void {
-    if (!this.active || this.suspended) return;
-    this.suspended = true;
-    this.clearTimers();
-    this.release();
-    this.phase('voce ROAD SENSE');
+    this.closeSession('off');
   }
 
-  /** Riapre l'ascolto dopo che ROAD SENSE ha finito di parlare. */
+  /** Nessun riavvio automatico: esiste solo per rispettare l'interfaccia. */
   resume(): void {
-    if (!this.active || !this.suspended) return;
-    this.suspended = false;
-    if (this.hidden) return;
-    // Un margine dopo la voce: la coda di un enunciato non deve finire
-    // nella finestra successiva.
-    this.scheduleNext(VOICE.listen.afterSpeechMs);
+    /* l'ascolto riparte da un tocco, mai da solo */
   }
 
-  // -- ciclo ----------------------------------------------------------------
+  // -- sessione -------------------------------------------------------------
 
-  /** Apre una finestra di ascolto con un riconoscitore NUOVO. */
-  private openWindow(ctor: RecognitionCtor, onDevice: boolean): void {
-    if (!this.active || this.suspended || this.hidden) return;
-    // Qualunque riconoscitore precedente viene chiuso prima di crearne un
-    // altro: due istanze vive insieme significano due sessioni audio.
+  private open(ctor: RecognitionCtor, onDevice: boolean): void {
     this.release();
 
     let recognition: RecognitionLike;
     try {
       recognition = new ctor();
     } catch {
+      this.active = false;
       this.phase('error');
       this.emit('error');
       return;
@@ -373,9 +320,10 @@ export class BrowserVoiceProvider implements VoiceProvider {
     const mine = (): boolean => gen === this.generation && this.active;
 
     recognition.lang = VOICE.lang;
-    // Non `continuous`: una finestra contiene una frase. L'ascolto continuo
-    // terrebbe aperta la sessione audio, che e' esattamente il problema.
+    // Una sessione, una frase. `continuous` terrebbe aperto il microfono
+    // anche dopo il comando, che e' esattamente cio' che si vuole evitare.
     recognition.continuous = false;
+    // Solo risultati definitivi: un parziale non deve diventare un evento.
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
     this.usingLocal = onDevice;
@@ -384,7 +332,6 @@ export class BrowserVoiceProvider implements VoiceProvider {
     recognition.onstart = () => {
       if (!mine()) return;
       this.mark('start');
-      this.failures = 0;
       this.phase('listening');
       this.emit('listening');
     };
@@ -401,55 +348,44 @@ export class BrowserVoiceProvider implements VoiceProvider {
       this.mark('speechstart');
       this.phase('speech');
     };
-    recognition.onspeechend = () => {
-      if (mine()) this.phase('listening');
-    };
     recognition.onnomatch = () => {
       if (mine()) this.mark('nomatch');
     };
 
     recognition.onresult = (event) => {
-      if (!mine()) return;
+      if (!mine() || this.delivered) return;
       this.mark('result');
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         if (!result?.isFinal) continue;
         const transcript = result[0]?.transcript ?? '';
         if (transcript.trim().length === 0) continue;
+
+        // La prima frase utile chiude la sessione: un risultato duplicato
+        // non puo' produrre una seconda segnalazione.
+        this.delivered = true;
         this.phase('result');
         this.report({ lastPhrase: transcript.trim() });
-        this.handlers.onTranscript?.(transcript);
+        const consegna = this.handlers.onTranscript;
+        this.closeSession('off');
+        consegna?.(transcript);
+        return;
       }
     };
 
     recognition.onerror = (event) => {
       if (!mine()) return;
       this.mark(`error:${event.error}`);
-      this.handleError(event.error, ctor);
+      this.report({ lastError: event.error });
+      this.handleError(event.error);
     };
 
     recognition.onend = () => {
       if (!mine()) return;
       this.mark('end');
-      this.phase('ended');
-      // Una finestra si e' chiusa. Il riconoscitore viene rilasciato SEMPRE,
-      // anche se il browser lo riutilizzerebbe: e' il rilascio che restituisce
-      // la sessione audio al sistema.
-      this.release();
-      if (this.primeOnly) {
-        this.active = false;
-        this.primeOnly = false;
-        this.clearTimers();
-        this.phase('idle');
-        return;
-      }
-      if (this.failures >= VOICE.maxRestartFailures) {
-        this.emit('error');
-        this.active = false;
-        return;
-      }
-      this.emit('restarting');
-      this.scheduleNext(VOICE.listen.gapMs);
+      // Fine della sessione. NESSUN riavvio: per ascoltare di nuovo serve un
+      // altro tocco su VOCE.
+      this.closeSession('off');
     };
 
     this.recognition = recognition;
@@ -457,87 +393,64 @@ export class BrowserVoiceProvider implements VoiceProvider {
     try {
       recognition.start();
     } catch {
+      this.active = false;
       this.phase('error');
       this.emit('error');
       return;
     }
 
-    // Limite superiore alla finestra: se il browser non chiude da solo, si
-    // chiude qui. `stop()` e' garbato - un risultato in arrivo viene
-    // consegnato - e porta comunque a `end`, quindi al rilascio.
-    this.windowTimer = this.env.setTimeout(() => {
-      this.windowTimer = null;
-      if (!mine() || this.suspended) return;
-      try {
-        recognition.stop();
-      } catch {
-        // Gia' chiuso: il ciclo prosegue da `end`.
-      }
-    }, VOICE.listen.windowMs);
+    // Se non succede nulla la sessione si chiude da sola, senza lasciare il
+    // microfono aperto e senza riprovare.
+    this.timeoutTimer = this.env.setTimeout(() => {
+      this.timeoutTimer = null;
+      if (!mine()) return;
+      this.mark('timeout');
+      this.closeSession('off');
+    }, VOICE.session.timeoutMs);
   }
 
-  /** Programma la finestra successiva, a riconoscitore gia' rilasciato. */
-  private scheduleNext(delayMs: number): void {
-    if (!this.active || this.suspended || this.hidden || this.primeOnly) return;
-    if (this.gapTimer !== null) return;
-    this.phase('pausa');
-    this.gapTimer = this.env.setTimeout(() => {
-      this.gapTimer = null;
-      const ctor = this.env.ctor();
-      if (!ctor) return;
-      this.openWindow(ctor, this.capabilities().onDevice);
-    }, delayMs);
-  }
-
-  private handleError(error: string, ctor: RecognitionCtor): void {
-    this.report({ lastError: error });
-
+  private handleError(error: string): void {
     if (error === 'not-allowed') {
       this.report({ mic: 'negato' });
-      this.fail('denied');
+      this.closeSession('denied');
       return;
     }
-
-    // Motore locale chiesto ma non realmente disponibile: e' il caso del
-    // Fold. Non e' un permesso negato, e' una configurazione impossibile.
-    const localRefused =
-      this.usingLocal && (error === 'language-not-supported' || error === 'service-not-allowed');
-    if (localRefused) {
+    // Motore locale chiesto ma non realmente disponibile: si annota e si
+    // chiude, senza riprovare da soli.
+    if (this.usingLocal && (error === 'language-not-supported' || error === 'service-not-allowed')) {
       onDeviceState = 'no';
       this.report({ local: 'no' });
-      if (this.allowRemote && !this.fellBack) {
-        this.fellBack = true;
-        this.release();
-        this.failures = 0;
-        this.openWindow(ctor, false);
-        return;
-      }
-      // Senza consenso all'elaborazione remota non c'e' alternativa
-      // praticabile: si dichiara spenta, non "in errore".
-      this.fail('off');
+      this.closeSession('off');
       return;
     }
-
     if (error === 'service-not-allowed') {
-      this.fail('denied');
+      this.closeSession('denied');
       return;
     }
     if (FATAL_ERRORS.has(error)) {
-      this.fail('error');
+      this.closeSession('error');
       return;
     }
-    // "no-speech" e "aborted" sono normali in auto: non sono guasti. Con
-    // l'ascolto a finestre il silenzio e' anzi il caso piu' frequente.
-    if (!BENIGN_ERRORS.has(error)) this.failures++;
+    // "no-speech" e "aborted" non sono guasti: la sessione finisce e basta.
+    this.closeSession('off');
   }
 
   // -- interni --------------------------------------------------------------
 
+  /** Chiude la sessione una volta sola e dichiara lo stato finale. */
+  private closeSession(status: VoiceStatus): void {
+    if (!this.active) return;
+    this.active = false;
+    this.clearTimer();
+    this.release();
+    this.phase(status === 'denied' || status === 'error' ? 'error' : 'idle');
+    this.emit(status);
+  }
+
   /**
-   * Stacca e chiude il riconoscitore corrente.
-   *
-   * Incrementare la generazione PRIMA di abortire e' voluto: `abort()` emette
-   * `end`, e quell'evento non deve riaprire il ciclo.
+   * Stacca e chiude il riconoscitore.
+   * La generazione si incrementa PRIMA di abortire: `abort()` emette `end`,
+   * e quell'evento non deve riaprire nulla.
    */
   private release(): void {
     const recognition = this.recognition;
@@ -562,41 +475,9 @@ export class BrowserVoiceProvider implements VoiceProvider {
     }
   }
 
-  private clearTimers(): void {
-    if (this.windowTimer !== null) this.env.clearTimeout(this.windowTimer);
-    if (this.gapTimer !== null) this.env.clearTimeout(this.gapTimer);
-    this.windowTimer = null;
-    this.gapTimer = null;
-  }
-
-  /**
-   * A pagina nascosta non si ascolta.
-   *
-   * Nessun browser garantisce il microfono in secondo piano, e insistere
-   * lascerebbe aperta una sessione audio che il sistema non ci ha concesso.
-   */
-  private handleVisibility(): void {
-    const visible = this.env.isVisible();
-    if (!visible) {
-      this.hidden = true;
-      this.clearTimers();
-      this.release();
-      this.phase('pausa');
-      return;
-    }
-    if (!this.hidden) return;
-    this.hidden = false;
-    if (this.active && !this.suspended) this.scheduleNext(VOICE.listen.gapMs);
-  }
-
-  /** Chiude la sessione senza riavvii e dichiara il motivo. */
-  private fail(status: VoiceStatus): void {
-    this.active = false;
-    this.primeOnly = false;
-    this.clearTimers();
-    this.release();
-    this.phase(status === 'off' ? 'idle' : 'error');
-    this.emit(status);
+  private clearTimer(): void {
+    if (this.timeoutTimer !== null) this.env.clearTimeout(this.timeoutTimer);
+    this.timeoutTimer = null;
   }
 
   /** Registra un evento reale del browser, per la diagnosi. */
