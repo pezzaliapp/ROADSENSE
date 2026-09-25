@@ -110,6 +110,43 @@ const defaultModelFactory: ModelFactory = (url) => new Model(url) as unknown as 
  */
 const LOAD_TIMEOUT_MS = 300_000;
 
+/**
+ * Contatori di cio' che il decoder ha REALMENTE fatto.
+ *
+ * Servono a una domanda sola: il bip periodico comparso sul Fold coincide con
+ * qualche operazione che si ripete? Se questi numeri restano fermi mentre il
+ * bip continua, il decoder e' scagionato - che e' un risultato, non un
+ * fallimento.
+ *
+ * Si contano eventi che accadono comunque. Nessun timer, nessuna interrogazione
+ * periodica, nessun tentativo aggiuntivo: la telemetria osserva e tace.
+ */
+export interface RecognizerStats {
+  /** Quante volte e' stato chiesto un caricamento. Il primo non e' un ritentativo. */
+  loadCalls: number;
+  /** Worker creati: uno per tentativo di caricamento. */
+  workerCreates: number;
+  /** Modelli portati a termine con successo. */
+  modelLoads: number;
+  /** Riconoscitori costruiti. */
+  recognizerCreates: number;
+  /** `retrieveFinalResult`: una per enunciato concluso. */
+  flushes: number;
+  /** Blocchi di campioni consegnati al decoder. */
+  feeds: number;
+  /** Campioni totali consegnati. */
+  samplesFed: number;
+  /** Errori riferiti dal worker, a livello di modello o di riconoscitore. */
+  errors: number;
+  /** Caricamenti oltre il primo. Il codice non ritenta da solo: deve restare 0. */
+  retries: number;
+  /** Worker terminati, per rilascio o per fallimento. */
+  terminations: number;
+  /** Risultati e parziali ricevuti. */
+  results: number;
+  partials: number;
+}
+
 export class LocalRecognizer {
   private model: ModelLike | null = null;
   private recognizer: KaldiRecognizer | null = null;
@@ -117,6 +154,20 @@ export class LocalRecognizer {
   private handlers: RecognizerHandlers | null = null;
   private loadMs_ = 0;
   private lastError_: string | null = null;
+  private stats_: RecognizerStats = {
+    loadCalls: 0,
+    workerCreates: 0,
+    modelLoads: 0,
+    recognizerCreates: 0,
+    flushes: 0,
+    feeds: 0,
+    samplesFed: 0,
+    errors: 0,
+    retries: 0,
+    terminations: 0,
+    results: 0,
+    partials: 0,
+  };
 
   constructor(
     private readonly createModelFor: ModelFactory = defaultModelFactory,
@@ -125,6 +176,10 @@ export class LocalRecognizer {
 
   phase(): ModelPhase {
     return this.phase_;
+  }
+  /** Copia dei contatori, per l'interfaccia diagnostica. */
+  stats(): RecognizerStats {
+    return { ...this.stats_ };
   }
   /** Motivo dell'ultimo fallimento, da mostrare invece di un'attesa muta. */
   lastError(): string | null {
@@ -169,6 +224,7 @@ export class LocalRecognizer {
       let model: ModelLike;
       try {
         model = this.createModelFor(url);
+        this.stats_.workerCreates++;
       } catch (error) {
         reject(asError(error));
         return;
@@ -191,6 +247,7 @@ export class LocalRecognizer {
         finire(() => {
           try {
             model.terminate();
+            this.stats_.terminations++;
           } catch {
             // Gia' terminato.
           }
@@ -206,6 +263,7 @@ export class LocalRecognizer {
       });
 
       model.on('error', (message) => {
+        this.stats_.errors++;
         const testo = (message as { error?: string } | undefined)?.error;
         fallire(testo && testo.length > 0 ? testo : 'errore non specificato dal decoder');
       });
@@ -230,13 +288,21 @@ export class LocalRecognizer {
     this.handlers = handlers;
     this.phase_ = 'caricamento';
     this.lastError_ = null;
+    this.stats_.loadCalls++;
+    // Il primo caricamento non e' un ritentativo. Questo contatore deve
+    // restare a zero: il codice non riprova da solo, e se crescesse vorrebbe
+    // dire che qualcuno lo sta facendo al posto suo.
+    this.stats_.retries = Math.max(0, this.stats_.loadCalls - 1);
     const iniziato = Date.now();
 
     try {
       const model = await this.openModel(modelUrl);
       this.model = model;
 
+      this.stats_.modelLoads++;
+
       const recognizer = new model.KaldiRecognizer(sampleRate, JSON.stringify(LAB_GRAMMAR));
+      this.stats_.recognizerCreates++;
       // Necessario per ottenere la confidenza parola per parola: senza questo
       // arriva solo il testo, e non si potrebbe distinguere un riconoscimento
       // sicuro da uno tirato per i capelli.
@@ -245,6 +311,7 @@ export class LocalRecognizer {
       recognizer.on('result', (message) => {
         const m = message as unknown as VoskMessage;
         if (m.event !== 'result') return;
+        this.stats_.results++;
         const words = m.result.result ?? [];
         const text = (m.result.text ?? '').trim();
         this.handlers?.onResult({
@@ -256,11 +323,14 @@ export class LocalRecognizer {
       recognizer.on('partialresult', (message) => {
         const m = message as unknown as VoskMessage;
         if (m.event !== 'partialresult') return;
+        this.stats_.partials++;
         this.handlers?.onPartial((m.result.partial ?? '').trim());
       });
       recognizer.on('error', (message) => {
         const m = message as unknown as VoskMessage;
-        if (m.event === 'error') this.handlers?.onError(m.error);
+        if (m.event !== 'error') return;
+        this.stats_.errors++;
+        this.handlers?.onError(m.error);
       });
 
       this.recognizer = recognizer;
@@ -287,12 +357,16 @@ export class LocalRecognizer {
    */
   feed(samples: Float32Array, sampleRate: number): void {
     if (!this.recognizer || samples.length === 0) return;
+    this.stats_.feeds++;
+    this.stats_.samplesFed += samples.length;
     this.recognizer.acceptWaveformFloat(samples, sampleRate);
   }
 
   /** Chiude l'enunciato e chiede il risultato definitivo. */
   flush(): void {
-    this.recognizer?.retrieveFinalResult();
+    if (!this.recognizer) return;
+    this.stats_.flushes++;
+    this.recognizer.retrieveFinalResult();
   }
 
   /** Rilascio completo: riconoscitore, modello e il worker che lo ospita. */
@@ -304,7 +378,10 @@ export class LocalRecognizer {
     }
     this.recognizer = null;
     try {
-      this.model?.terminate();
+      if (this.model) {
+        this.model.terminate();
+        this.stats_.terminations++;
+      }
     } catch {
       // Gia' terminato.
     }

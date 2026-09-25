@@ -40,12 +40,49 @@ export interface MicSessionEvents {
   onEnded: () => void;
 }
 
+/**
+ * Dove finisce il segnale dopo essere stato letto.
+ *
+ * LA DOMANDA NASCE DA UN BIP MISURATO SUL FOLD
+ *
+ * Il percorso originale era `sorgente -> presa -> guadagno 0 -> destinazione`.
+ * Il guadagno a zero rende muto il segnale, ma la DESTINAZIONE resta
+ * collegata, e questo tiene aperto uno stream di USCITA sull'audio di Android -
+ * per giunta a 16 kHz, che non e' la frequenza nativa del dispositivo.
+ *
+ * Finche' Vosk non partiva davvero quel percorso non dava fastidio. Nella prima
+ * esecuzione in cui il decoder ha lavorato sul serio - decompressione di 48 MB,
+ * costruzione degli FST, decodifica - e' comparso un bip periodico. Non e'
+ * dimostrato che la causa sia questa: e' l'ipotesi con piu' indizi, e questi
+ * tre modi esistono per DIMOSTRARLA sul telefono invece di darla per buona.
+ *
+ *   silent     si elabora senza alcun dispositivo di uscita
+ *              (`setSinkId({type:'none'})`, documentato proprio per non
+ *              riprodurre quando serve solo elaborare). E' cio' che vogliamo:
+ *              del microfono non ci interessa sentire niente.
+ *   speaker    il percorso precedente, guadagno 0 verso la destinazione.
+ *              Resta per poter confrontare.
+ *   detached   nessun collegamento alla destinazione. Serve a rispondere a una
+ *              domanda precisa: l'AudioWorklet resta vivo lo stesso? Il
+ *              contatore dei blocchi ricevuti lo dira'.
+ */
+export type OutputMode = 'silent' | 'speaker' | 'detached';
+
 export interface MicSessionInfo {
   sampleRate: number;
   contextState: string;
   trackLabel: string;
   /** Vincoli realmente concessi dal browser, non quelli richiesti. */
   settings: Record<string, unknown>;
+  /** Modalita' REALMENTE ottenuta, che puo' differire da quella richiesta. */
+  output: OutputMode;
+  /** Perche' la modalita' richiesta non e' stata ottenuta, se e' successo. */
+  outputNote: string | null;
+}
+
+/** Contesto audio con l'API di scelta dell'uscita, dove il browser la espone. */
+interface ContextWithSink {
+  setSinkId?: (sink: { type: 'none' } | string) => Promise<void>;
 }
 
 const WORKLET_URL = '/lab/pcmTap.worklet.js';
@@ -78,7 +115,7 @@ export class MicSession {
    * Apre il microfono. DEVE essere chiamata dentro un gesto dell'utente:
    * su Android il permesso viene concesso solo in quella finestra.
    */
-  async open(events: MicSessionEvents): Promise<MicSessionInfo> {
+  async open(events: MicSessionEvents, output: OutputMode = 'silent'): Promise<MicSessionInfo> {
     if (this.stream) throw new Error('microfono gia aperto');
     this.events = events;
 
@@ -122,6 +159,24 @@ export class MicSession {
     // Su iOS il contesto nasce sospeso finche' non lo si riprende dentro il gesto.
     if (context.state === 'suspended') await context.resume();
 
+    // Uscita: si prova a NON avere alcun dispositivo di riproduzione.
+    let ottenuta: OutputMode = output;
+    let nota: string | null = null;
+    if (output === 'silent') {
+      const conSink = context as unknown as ContextWithSink;
+      if (typeof conSink.setSinkId !== 'function') {
+        ottenuta = 'speaker';
+        nota = 'setSinkId non disponibile su questo browser';
+      } else {
+        try {
+          await conSink.setSinkId({ type: 'none' });
+        } catch (error) {
+          ottenuta = 'speaker';
+          nota = error instanceof Error ? error.message : String(error);
+        }
+      }
+    }
+
     await context.audioWorklet.addModule(WORKLET_URL);
 
     this.source = context.createMediaStreamSource(stream);
@@ -134,23 +189,29 @@ export class MicSession {
       this.events?.onFrame(event.data);
     };
 
-    // Uscita a guadagno ZERO verso l'altoparlante.
-    // Non serve per sentire - sentirsi sarebbe un disastro, e' il microfono
-    // dell'abitacolo - ma perche' un ramo del grafo che non arriva alla
-    // destinazione puo' non essere elaborato affatto. Guadagno 0 significa
-    // grafo vivo e nessun suono emesso.
-    this.sink = context.createGain();
-    this.sink.gain.value = 0;
-
     this.source.connect(this.tap);
-    this.tap.connect(this.sink);
-    this.sink.connect(context.destination);
+
+    // Il collegamento alla destinazione serve a tenere il grafo "tirato": un
+    // ramo che non la raggiunge puo' non essere elaborato affatto. Il guadagno
+    // resta a ZERO in ogni caso - sentire il microfono dell'abitacolo sarebbe
+    // un disastro - ma con `silent` la destinazione non ha piu' dietro di se'
+    // alcun dispositivo, quindi non c'e' nessuno stream di uscita da tenere
+    // aperto. In `detached` non si collega nulla, ed e' la prova che dira' se
+    // quel collegamento fosse davvero necessario.
+    if (ottenuta !== 'detached') {
+      this.sink = context.createGain();
+      this.sink.gain.value = 0;
+      this.tap.connect(this.sink);
+      this.sink.connect(context.destination);
+    }
 
     return {
       sampleRate: context.sampleRate,
       contextState: context.state,
       trackLabel: track?.label ?? 'sconosciuta',
       settings: (track?.getSettings?.() ?? {}) as Record<string, unknown>,
+      output: ottenuta,
+      outputNote: nota,
     };
   }
 
