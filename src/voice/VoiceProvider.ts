@@ -141,6 +141,12 @@ export interface VoiceProvider {
    */
   isListening?(): boolean;
   /**
+   * L'ascolto mani libere e' attivo: sessione aperta, oppure chiusa e in
+   * attesa di riaprirsi da sola. E' questo, non `isListening`, che dice se un
+   * tocco su VOCE aprirebbe una catena parallela.
+   */
+  isArmed?(): boolean;
+  /**
    * Rilascia il riconoscitore perche' ROAD SENSE sta per parlare.
    *
    * Senza questo, la voce sintetica finirebbe nel microfono e potrebbe essere

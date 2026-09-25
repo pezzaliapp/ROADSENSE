@@ -53,6 +53,26 @@
  * Alla prima frase utile la sessione si chiude. Un riconoscitore che
  * consegna due volte lo stesso risultato - capita su Android - non puo'
  * produrre due segnalazioni.
+ *
+ * RIARMO CONTROLLATO, NON IL VECCHIO CICLO
+ * Chiusa la sessione, ROAD SENSE puo' riaprirne un'altra da solo: e' cio' che
+ * permette di dire "buca", poi "ostacolo", poi "acqua" senza toccare il
+ * telefono.
+ *
+ * La differenza con il ciclo che fece suonare il Fold ogni secondo e mezzo
+ * non e' la durata dell'attesa: e' che ogni chiusura ha un MOTIVO, e il
+ * motivo decide.
+ *
+ *   command   ha parlato e l'abbiamo capito -> si riapre subito
+ *   silence   non ha detto niente -> si riapre piano, e solo per un numero
+ *             CONTATO di volte. Poi si smette e serve un tocco
+ *   error     si arretra; esauriti i tentativi il circuito resta aperto
+ *   denied    permesso negato -> mai
+ *   stopped   STOP -> mai, e nessun timer sopravvive
+ *   speaking  sta parlando ROAD SENSE -> riapre `resume()`, non il motivo
+ *
+ * Un comando riuscito azzera i contatori: e' la conversazione che tiene vivo
+ * l'ascolto, non un timer.
  */
 
 import { VOICE } from '../config/config';
@@ -197,6 +217,23 @@ const FATAL_ERRORS = new Set([
   'bad-grammar',
 ]);
 
+/**
+ * Perche' una sessione si e' chiusa. Decide se e quando se ne apre un'altra.
+ */
+export type VoiceEndReason =
+  /** Una frase e' stata riconosciuta e consegnata. */
+  | 'command'
+  /** Nessuna frase: timeout, `no-speech`, chiusura spontanea del browser. */
+  | 'silence'
+  /** Guasto tecnico recuperabile. */
+  | 'error'
+  /** Permesso negato o configurazione impossibile: non si insiste. */
+  | 'denied'
+  /** STOP esplicito. */
+  | 'stopped'
+  /** ROAD SENSE sta parlando. */
+  | 'speaking';
+
 export class BrowserVoiceProvider implements VoiceProvider {
   readonly id = 'browser-voice';
   readonly label = 'Riconoscimento del browser';
@@ -222,6 +259,16 @@ export class BrowserVoiceProvider implements VoiceProvider {
   private trail: string[] = [];
   /** Il tentativo in corso ha chiesto l'elaborazione locale? */
   private usingLocal = false;
+  /**
+   * Modalita' mani libere attiva: le sessioni possono riaprirsi da sole.
+   * La accende `start()`, la spegne `stop()` o il circuito aperto.
+   */
+  private armed = false;
+  /** Sessioni chiuse nel silenzio, di seguito. Azzerato da un comando. */
+  private silentCycles = 0;
+  /** Errori consecutivi. Azzerato da un comando. */
+  private errorCount = 0;
+  private rearmTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly allowRemote: boolean = false,
@@ -234,9 +281,18 @@ export class BrowserVoiceProvider implements VoiceProvider {
     return { supported: true, onDevice: onDeviceState === 'si' };
   }
 
-  /** true mentre una sessione e' in ascolto. */
+  /** true mentre una sessione e' effettivamente aperta. */
   isListening(): boolean {
     return this.active;
+  }
+
+  /**
+   * true finche' l'ascolto mani libere e' attivo: sessione aperta, oppure
+   * chiusa ma in attesa di riaprirsi. Serve a impedire che un tocco su VOCE
+   * apra una seconda catena parallela.
+   */
+  isArmed(): boolean {
+    return this.armed;
   }
 
   /**
@@ -273,12 +329,18 @@ export class BrowserVoiceProvider implements VoiceProvider {
       return;
     }
 
+    this.armed = true;
+    this.silentCycles = 0;
+    this.errorCount = 0;
     this.active = true;
     this.open(ctor, caps.onDevice);
   }
 
   /** Chiude la sessione. Sicura anche se non ce n'e' una aperta. */
   stop(): void {
+    // Disarmare PRIMA di chiudere: `closeSession` consulta `armed` per
+    // decidere se riaprire, e uno STOP non deve poter riarmare nulla.
+    this.armed = false;
     this.clearTimer();
     const era = this.active;
     this.active = false;
@@ -293,12 +355,16 @@ export class BrowserVoiceProvider implements VoiceProvider {
    * Senza riavvio - per segnalare di nuovo serve un tocco, come sempre.
    */
   pause(): void {
-    this.closeSession('off');
+    // Non disarma: la modalita' mani libere resta attiva, e' solo sospesa.
+    // A riaprire sara' `resume()`, non il motivo di chiusura.
+    this.clearTimer();
+    this.closeSession('off', 'speaking');
   }
 
-  /** Nessun riavvio automatico: esiste solo per rispettare l'interfaccia. */
+  /** ROAD SENSE ha finito di parlare: si torna in ascolto, con un margine. */
   resume(): void {
-    /* l'ascolto riparte da un tocco, mai da solo */
+    if (!this.armed || this.active) return;
+    this.scheduleRearm(VOICE.rearm.afterSpeechMs);
   }
 
   // -- sessione -------------------------------------------------------------
@@ -367,7 +433,10 @@ export class BrowserVoiceProvider implements VoiceProvider {
         this.phase('result');
         this.report({ lastPhrase: transcript.trim() });
         const consegna = this.handlers.onTranscript;
-        this.closeSession('off');
+        // Un comando riuscito: i contatori ripartono e l'ascolto si riapre.
+        this.silentCycles = 0;
+        this.errorCount = 0;
+        this.closeSession('off', 'command');
         consegna?.(transcript);
         return;
       }
@@ -383,9 +452,9 @@ export class BrowserVoiceProvider implements VoiceProvider {
     recognition.onend = () => {
       if (!mine()) return;
       this.mark('end');
-      // Fine della sessione. NESSUN riavvio: per ascoltare di nuovo serve un
-      // altro tocco su VOCE.
-      this.closeSession('off');
+      // Chiusura senza che sia arrivata una frase: per il browser e' finita,
+      // per noi e' silenzio. Si riapre, ma un numero contato di volte.
+      this.closeSession('off', 'silence');
     };
 
     this.recognition = recognition;
@@ -405,14 +474,14 @@ export class BrowserVoiceProvider implements VoiceProvider {
       this.timeoutTimer = null;
       if (!mine()) return;
       this.mark('timeout');
-      this.closeSession('off');
+      this.closeSession('off', 'silence');
     }, VOICE.session.timeoutMs);
   }
 
   private handleError(error: string): void {
     if (error === 'not-allowed') {
       this.report({ mic: 'negato' });
-      this.closeSession('denied');
+      this.closeSession('denied', 'denied');
       return;
     }
     // Motore locale chiesto ma non realmente disponibile: si annota e si
@@ -420,31 +489,101 @@ export class BrowserVoiceProvider implements VoiceProvider {
     if (this.usingLocal && (error === 'language-not-supported' || error === 'service-not-allowed')) {
       onDeviceState = 'no';
       this.report({ local: 'no' });
-      this.closeSession('off');
+      this.closeSession('off', 'denied');
       return;
     }
     if (error === 'service-not-allowed') {
-      this.closeSession('denied');
+      this.closeSession('denied', 'denied');
       return;
     }
     if (FATAL_ERRORS.has(error)) {
-      this.closeSession('error');
+      this.closeSession('error', 'denied');
       return;
     }
-    // "no-speech" e "aborted" non sono guasti: la sessione finisce e basta.
-    this.closeSession('off');
+    // "no-speech" e "aborted" non sono guasti: sono silenzio, e come tali
+    // vanno contati. Gli altri errori sono guasti e fanno arretrare.
+    this.closeSession('off', error === 'no-speech' || error === 'aborted' ? 'silence' : 'error');
   }
 
   // -- interni --------------------------------------------------------------
 
-  /** Chiude la sessione una volta sola e dichiara lo stato finale. */
-  private closeSession(status: VoiceStatus): void {
+  /**
+   * Chiude la sessione una volta sola, dichiara lo stato e decide se
+   * riaprirla. Il MOTIVO e' l'unica cosa che governa quella decisione.
+   */
+  private closeSession(status: VoiceStatus, reason: VoiceEndReason): void {
     if (!this.active) return;
     this.active = false;
     this.clearTimer();
     this.release();
     this.phase(status === 'denied' || status === 'error' ? 'error' : 'idle');
-    this.emit(status);
+
+    const attesa = this.rearmDelay(reason);
+    if (attesa === null) {
+      // Non si riapre: da qui in poi serve un tocco.
+      if (reason !== 'speaking') this.armed = false;
+      this.emit(status);
+      return;
+    }
+    // Si riaprira': lo stato lo dice, invece di fingere ascolto o assenza.
+    this.emit('restarting');
+    this.scheduleRearm(attesa);
+  }
+
+  /**
+   * Quanto attendere prima di riaprire, o `null` se non si riapre.
+   *
+   * E' il punto unico della politica di recovery: tenerla in una funzione
+   * sola e' cio' che impedisce al vecchio ciclo di rientrare da una porta
+   * laterale.
+   */
+  private rearmDelay(reason: VoiceEndReason): number | null {
+    if (!this.armed) return null;
+
+    switch (reason) {
+      case 'command':
+        // Ha appena parlato: probabilmente parlera' ancora.
+        return VOICE.rearm.afterCommandMs;
+
+      case 'silence': {
+        // Il silenzio non tiene aperto il microfono all'infinito.
+        if (this.silentCycles >= VOICE.rearm.maxSilentCycles) return null;
+        this.silentCycles++;
+        return VOICE.rearm.afterSilenceMs;
+      }
+
+      case 'error': {
+        const backoff = VOICE.rearm.errorBackoffMs;
+        // Circuito aperto: esauriti i tentativi non si insiste.
+        if (this.errorCount >= backoff.length) return null;
+        const attesa = backoff[this.errorCount] as number;
+        this.errorCount++;
+        return attesa;
+      }
+
+      // Sta parlando ROAD SENSE: riapre `resume()`, non questa funzione.
+      case 'speaking':
+        return null;
+
+      case 'denied':
+      case 'stopped':
+        return null;
+    }
+  }
+
+  /** Programma la riapertura. Un solo riarmo in volo per volta. */
+  private scheduleRearm(delayMs: number): void {
+    if (this.rearmTimer !== null) this.env.clearTimeout(this.rearmTimer);
+    this.rearmTimer = this.env.setTimeout(() => {
+      this.rearmTimer = null;
+      // Fra la programmazione e lo scadere puo' essere arrivato uno STOP.
+      if (!this.armed || this.active) return;
+      const ctor = this.env.ctor();
+      if (!ctor) return;
+      this.active = true;
+      this.delivered = false;
+      this.open(ctor, this.capabilities().onDevice);
+    }, delayMs);
   }
 
   /**
@@ -478,6 +617,8 @@ export class BrowserVoiceProvider implements VoiceProvider {
   private clearTimer(): void {
     if (this.timeoutTimer !== null) this.env.clearTimeout(this.timeoutTimer);
     this.timeoutTimer = null;
+    if (this.rearmTimer !== null) this.env.clearTimeout(this.rearmTimer);
+    this.rearmTimer = null;
   }
 
   /** Registra un evento reale del browser, per la diagnosi. */

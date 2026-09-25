@@ -305,17 +305,19 @@ describe('degradazione senza riconoscimento vocale', () => {
 
   it('ogni errore previsto dalle specifiche chiude la sessione con un esito dichiarato', async () => {
     const casi: Array<[string, string | null]> = [
+      // Fatali: nessun riarmo, lo stato finale e' quello dichiarato.
       ['not-allowed', 'denied'],
       ['service-not-allowed', 'denied'],
       ['language-not-supported', 'error'],
       ['phrases-not-supported', 'error'],
       ['bad-grammar', 'error'],
-      // Non sono guasti, ma chiudono comunque la sessione: con l'ascolto su
-      // richiesta non esiste piu' un "si riprova da soli".
-      ['no-speech', 'off'],
-      ['aborted', 'off'],
-      ['audio-capture', 'off'],
-      ['network', 'off'],
+      // Recuperabili: la sessione si chiude ma l'ascolto si riarmera',
+      // quindi lo stato dichiarato e' "restarting", non "off". Silenzio ed
+      // errore hanno budget diversi, ma entrambi finiti.
+      ['no-speech', 'restarting'],
+      ['aborted', 'restarting'],
+      ['audio-capture', 'restarting'],
+      ['network', 'restarting'],
     ];
 
     for (const [errore, atteso] of casi) {

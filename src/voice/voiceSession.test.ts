@@ -134,51 +134,122 @@ describe('un tocco, una sessione', () => {
   });
 });
 
-describe('nessun riavvio automatico', () => {
-  it('dopo onend non si riapre nulla, mai', () => {
-    // E' il difetto osservato sul Fold: un tono ogni secondo e mezzo.
+describe('riarmo controllato, non il vecchio ciclo', () => {
+  it('dopo un COMANDO l\'ascolto si riapre da solo', () => {
+    // E' il requisito: "buca" -> evento -> di nuovo in ascolto, senza tocco.
     const p = provider();
     p.start({});
-    FakeRecognition.created[0]!.endByItself();
-
-    vi.advanceTimersByTime(600_000); // dieci minuti
-    expect(FakeRecognition.created).toHaveLength(1);
+    FakeRecognition.created[0]!.say('buca');
     expect(FakeRecognition.live).toBe(0);
-    expect(p.isListening()).toBe(false);
+
+    vi.advanceTimersByTime(VOICE.rearm.afterCommandMs + 20);
+    expect(FakeRecognition.created).toHaveLength(2);
+    expect(FakeRecognition.live).toBe(1);
   });
 
-  it('dopo no-speech non si riapre nulla', () => {
-    // `no-speech` arriva a ogni silenzio: prima era gratuito e il ciclo
-    // ripartiva all'infinito.
+  it('il SILENZIO riapre, ma un numero CONTATO di volte', () => {
+    // E' la differenza col ciclo che faceva suonare il Fold senza fine.
     const p = provider();
     p.start({});
-    FakeRecognition.created[0]!.onerror?.({ error: 'no-speech' });
+
+    for (let i = 0; i < VOICE.rearm.maxSilentCycles; i++) {
+      FakeRecognition.created.at(-1)!.endByItself();
+      vi.advanceTimersByTime(VOICE.rearm.afterSilenceMs + 20);
+    }
+    expect(FakeRecognition.created).toHaveLength(VOICE.rearm.maxSilentCycles + 1);
+
+    // Superato il limite si smette, e nessun timer sopravvive.
+    FakeRecognition.created.at(-1)!.endByItself();
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.created).toHaveLength(VOICE.rearm.maxSilentCycles + 1);
+    expect(p.isArmed()).toBe(false);
+    expect(FakeRecognition.live).toBe(0);
+  });
+
+  it('no-speech e\' silenzio, non guasto: stesso conteggio', () => {
+    const p = provider();
+    p.start({});
+    for (let i = 0; i <= VOICE.rearm.maxSilentCycles; i++) {
+      FakeRecognition.created.at(-1)!.onerror?.({ error: 'no-speech' });
+      vi.advanceTimersByTime(VOICE.rearm.afterSilenceMs + 20);
+    }
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.created).toHaveLength(VOICE.rearm.maxSilentCycles + 1);
+    expect(p.isArmed()).toBe(false);
+  });
+
+  it('un comando azzera il conteggio del silenzio', () => {
+    // E' la conversazione a tenere vivo l'ascolto, non un timer.
+    const p = provider();
+    p.start({});
+    FakeRecognition.created.at(-1)!.endByItself();
+    vi.advanceTimersByTime(VOICE.rearm.afterSilenceMs + 20);
+    FakeRecognition.created.at(-1)!.endByItself();
+    vi.advanceTimersByTime(VOICE.rearm.afterSilenceMs + 20);
+
+    FakeRecognition.created.at(-1)!.say('buca');
+    vi.advanceTimersByTime(VOICE.rearm.afterCommandMs + 20);
+
+    // Il budget di silenzio riparte da zero.
+    for (let i = 0; i < VOICE.rearm.maxSilentCycles; i++) {
+      FakeRecognition.created.at(-1)!.endByItself();
+      vi.advanceTimersByTime(VOICE.rearm.afterSilenceMs + 20);
+    }
+    expect(p.isArmed()).toBe(true);
+  });
+
+  it('gli ERRORI arretrano e poi aprono il circuito', () => {
+    const p = provider();
+    p.start({});
+    const passi = VOICE.rearm.errorBackoffMs.length;
+
+    for (let i = 0; i < passi; i++) {
+      FakeRecognition.created.at(-1)!.onerror?.({ error: 'network' });
+      // Prima dell'attesa prevista non riapre nulla.
+      vi.advanceTimersByTime((VOICE.rearm.errorBackoffMs[i] as number) - 50);
+      expect([i, FakeRecognition.created.length]).toEqual([i, i + 1]);
+      vi.advanceTimersByTime(100);
+    }
+    expect(FakeRecognition.created).toHaveLength(passi + 1);
+
+    // Esaurito il budget il circuito resta aperto.
+    FakeRecognition.created.at(-1)!.onerror?.({ error: 'network' });
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.created).toHaveLength(passi + 1);
+    expect(p.isArmed()).toBe(false);
+  });
+
+  it('un permesso negato non viene mai riprovato', () => {
+    const p = provider();
+    const stati: string[] = [];
+    p.start({ onStatus: (s) => stati.push(s) });
+    FakeRecognition.created[0]!.onerror?.({ error: 'not-allowed' });
 
     vi.advanceTimersByTime(600_000);
     expect(FakeRecognition.created).toHaveLength(1);
+    expect(p.isArmed()).toBe(false);
+    expect(stati.at(-1)).toBe('denied');
+  });
+
+  it('durante l\'attesa lo stato NON finge ascolto ne\' assenza', () => {
+    const p = provider();
+    const stati: string[] = [];
+    p.start({ onStatus: (s) => stati.push(s) });
+    FakeRecognition.created[0]!.say('buca');
+    // "restarting" e' la terza possibilita': VOCE ~ in interfaccia.
+    expect(stati.at(-1)).toBe('restarting');
     expect(p.isListening()).toBe(false);
+    expect(p.isArmed()).toBe(true);
   });
 
-  it('dopo un errore qualsiasi non si riapre nulla', () => {
-    for (const errore of ['aborted', 'network', 'audio-capture', 'not-allowed', 'bad-grammar']) {
-      FakeRecognition.created = [];
-      FakeRecognition.live = 0;
-      const p = provider();
-      p.start({});
-      FakeRecognition.created[0]!.onerror?.({ error: errore });
-      vi.advanceTimersByTime(600_000);
-      expect([errore, FakeRecognition.created.length]).toEqual([errore, 1]);
-      expect([errore, p.isListening()]).toEqual([errore, false]);
-    }
-  });
-
-  it('nel codice non esiste alcuna riapertura programmata', () => {
-    const source = readFileSync(resolve(ROOT, 'src/voice/BrowserVoiceProvider.ts'), 'utf8');
-    const codice = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    expect(codice).not.toMatch(/scheduleNext|restart|gapMs|windowMs/);
-    // Un solo timer programmato dalla classe, ed e' quello che CHIUDE la
-    // sessione. Le altre occorrenze sono la definizione dell'ambiente.
-    expect(codice.match(/this\.env\.setTimeout\(/g) ?? []).toHaveLength(1);
+  it('un solo riarmo in volo, mai due catene parallele', () => {
+    const p = provider();
+    p.start({});
+    const r = FakeRecognition.created[0]!;
+    r.say('buca');
+    r.say('buca'); // risultato duplicato dal browser
+    vi.advanceTimersByTime(VOICE.rearm.afterCommandMs + 20);
+    expect(FakeRecognition.created).toHaveLength(2);
   });
 });
 
@@ -206,15 +277,16 @@ describe('la frase chiude la sessione', () => {
     expect(sentite).toEqual(['buca']);
   });
 
-  it('dopo la frase serve un nuovo tocco per riascoltare', () => {
+  it('dopo la frase l\'ascolto torna disponibile da solo', () => {
     const p = provider();
     p.start({});
     FakeRecognition.created[0]!.say('buca');
-    vi.advanceTimersByTime(600_000);
-    expect(FakeRecognition.created).toHaveLength(1);
+    vi.advanceTimersByTime(VOICE.rearm.afterCommandMs + 20);
+    expect(FakeRecognition.live).toBe(1);
 
-    p.start({}); // nuovo tocco
-    expect(FakeRecognition.created).toHaveLength(2);
+    // Un tocco in piu' non apre una seconda catena.
+    p.start({});
+    expect(FakeRecognition.live).toBe(1);
   });
 });
 
@@ -226,15 +298,24 @@ describe('timeout e chiusura pulita', () => {
 
     expect(p.isListening()).toBe(true);
     vi.advanceTimersByTime(VOICE.session.timeoutMs + 10);
+    // Il microfono e' chiuso: e' il punto che conta.
     expect(p.isListening()).toBe(false);
     expect(FakeRecognition.live).toBe(0);
-    expect(stati.at(-1)).toBe('off');
+    // Il silenzio rientra nel budget, quindi si riaprira'.
+    expect(stati.at(-1)).toBe('restarting');
   });
 
-  it('e non riapre nulla dopo il timeout', () => {
-    provider().start({});
-    vi.advanceTimersByTime(VOICE.session.timeoutMs + 600_000);
-    expect(FakeRecognition.created).toHaveLength(1);
+  it('il timeout consuma il budget di silenzio, poi si ferma', () => {
+    const p = provider();
+    p.start({});
+    // Ogni ciclo: timeout, attesa, riapertura.
+    for (let i = 0; i <= VOICE.rearm.maxSilentCycles; i++) {
+      vi.advanceTimersByTime(VOICE.session.timeoutMs + VOICE.rearm.afterSilenceMs + 40);
+    }
+    const create = FakeRecognition.created.length;
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.created).toHaveLength(create);
+    expect(p.isArmed()).toBe(false);
   });
 
   it('stop() chiude e non lascia timer pendenti', () => {
@@ -332,5 +413,163 @@ describe('voce e pulsante convergono sulla stessa logica', () => {
     // microfono che non sente.
     expect(corpo).toMatch(/showToast/);
     expect(corpo).not.toMatch(/if \(!parsed\.ok\) return;/);
+  });
+});
+
+/**
+ * MANI LIBERE: LA SEQUENZA CHE IL TEST SU STRADA HA VISTO FALLIRE.
+ *
+ * Sul Samsung Fold "buca" veniva riconosciuta, l'evento creato, e subito dopo
+ * la interfaccia tornava a VOCE OFF: la sessione finiva e nessuno la
+ * riapriva. Questi casi descrivono cio' che deve accadere adesso.
+ */
+describe('A/B. piu\' comandi senza toccare il telefono', () => {
+  it('A. "buca" -> evento -> end -> riarmo -> in ascolto', () => {
+    const p = provider();
+    const sentite: string[] = [];
+    const stati: string[] = [];
+    p.start({ onTranscript: (t) => sentite.push(t), onStatus: (s) => stati.push(s) });
+
+    FakeRecognition.created[0]!.say('buca');
+    expect(sentite).toEqual(['buca']);
+    expect(stati.at(-1)).toBe('restarting');
+
+    vi.advanceTimersByTime(VOICE.rearm.afterCommandMs + 20);
+    expect(stati.at(-1)).toBe('listening');
+    expect(p.isListening()).toBe(true);
+  });
+
+  it('B. "buca" -> "ostacolo" -> "acqua", un solo tocco iniziale', () => {
+    const p = provider();
+    const sentite: string[] = [];
+    p.start({ onTranscript: (t) => sentite.push(t) });
+
+    for (const comando of ['buca', 'ostacolo', 'acqua']) {
+      expect(FakeRecognition.live).toBe(1);
+      FakeRecognition.created.at(-1)!.say(comando);
+      vi.advanceTimersByTime(VOICE.rearm.afterCommandMs + 20);
+    }
+
+    expect(sentite).toEqual(['buca', 'ostacolo', 'acqua']);
+    // Un solo `start()` in tutta la sequenza.
+    expect(p.isArmed()).toBe(true);
+  });
+
+  it('B2. ogni comando apre una sessione NUOVA, mai due insieme', () => {
+    const p = provider();
+    p.start({});
+    for (const c of ['buca', 'ostacolo', 'acqua']) {
+      expect(FakeRecognition.live).toBeLessThanOrEqual(1);
+      FakeRecognition.created.at(-1)!.say(c);
+      vi.advanceTimersByTime(VOICE.rearm.afterCommandMs + 20);
+    }
+    expect(FakeRecognition.created).toHaveLength(4);
+    expect(FakeRecognition.live).toBe(1);
+  });
+});
+
+describe('C. STOP dopo un comando', () => {
+  it('nessun riarmo dopo STOP', () => {
+    const p = provider();
+    p.start({});
+    FakeRecognition.created[0]!.say('buca');
+    // STOP arriva DURANTE l'attesa del riarmo.
+    p.stop();
+
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.created).toHaveLength(1);
+    expect(FakeRecognition.live).toBe(0);
+    expect(p.isArmed()).toBe(false);
+  });
+
+  it('STOP mentre e\' in ascolto: chiude e non riapre', () => {
+    const p = provider();
+    p.start({});
+    p.stop();
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.live).toBe(0);
+    expect(FakeRecognition.created).toHaveLength(1);
+  });
+});
+
+describe('F. ROAD SENSE parla', () => {
+  it('durante la voce sintetica il riconoscitore e\' CHIUSO', () => {
+    const p = provider();
+    p.start({});
+    p.pause();
+    expect(FakeRecognition.live).toBe(0);
+    // E non si riapre da solo mentre ROAD SENSE sta parlando.
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.live).toBe(0);
+  });
+
+  it('una frase consegnata dopo la pausa non diventa segnalazione', () => {
+    const p = provider();
+    const sentite: string[] = [];
+    p.start({ onTranscript: (t) => sentite.push(t) });
+    const vecchio = FakeRecognition.created[0]!;
+    p.pause();
+
+    // Sarebbe la voce di ROAD SENSE rientrata dal microfono.
+    vecchio.say('attenzione buca tra trecento metri');
+    expect(sentite).toEqual([]);
+  });
+
+  it('finita la voce, l\'ascolto torna da solo', () => {
+    const p = provider();
+    p.start({});
+    p.pause();
+    p.resume();
+
+    // Non subito: c'e' un margine per la coda dell'enunciato.
+    expect(FakeRecognition.live).toBe(0);
+    vi.advanceTimersByTime(VOICE.rearm.afterSpeechMs + 20);
+    expect(FakeRecognition.live).toBe(1);
+  });
+
+  it('dopo uno STOP la voce sintetica non puo\' riaccendere nulla', () => {
+    const p = provider();
+    p.start({});
+    p.stop();
+    p.resume();
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.created).toHaveLength(1);
+  });
+});
+
+describe('G. callback tardive', () => {
+  it('un `end` in ritardo dopo STOP non riarma', () => {
+    const p = provider();
+    p.start({});
+    const vecchio = FakeRecognition.created[0]!;
+    p.stop();
+
+    vecchio.onend?.();
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.created).toHaveLength(1);
+  });
+
+  it('un `error` in ritardo dopo STOP non riarma', () => {
+    const p = provider();
+    p.start({});
+    const vecchio = FakeRecognition.created[0]!;
+    p.stop();
+
+    vecchio.onerror?.({ error: 'network' });
+    vi.advanceTimersByTime(600_000);
+    expect(FakeRecognition.created).toHaveLength(1);
+  });
+
+  it('un risultato di una sessione superata non consegna nulla', () => {
+    const p = provider();
+    const sentite: string[] = [];
+    p.start({ onTranscript: (t) => sentite.push(t) });
+    const prima = FakeRecognition.created[0]!;
+
+    prima.say('buca');
+    vi.advanceTimersByTime(VOICE.rearm.afterCommandMs + 20);
+    // La vecchia istanza consegna in ritardo: e' gia' stata superata.
+    prima.say('ostacolo');
+    expect(sentite).toEqual(['buca']);
   });
 });

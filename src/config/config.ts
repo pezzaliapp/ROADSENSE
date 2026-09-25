@@ -384,6 +384,43 @@ export const VOICE = {
    * Nessuna delle due si risolve con una costante. Una sessione per tocco
    * costa un gesto e toglie entrambi i problemi.
    */
+  /**
+   * RIARMO CONTROLLATO.
+   *
+   * Dopo un comando valido l'ascolto riparte da solo: e' cio' che rende
+   * possibile dire "buca", poi "ostacolo", poi "acqua" senza toccare il
+   * telefono. Non e' il vecchio ciclo: li' si riapriva ogni secondo e mezzo
+   * anche nel silenzio piu' totale, facendo suonare il tono di Android senza
+   * fine.
+   *
+   * La differenza sta in tre limiti:
+   *   - il riarmo dopo un COMANDO e' rapido, perche' chi ha appena parlato
+   *     probabilmente parlera' ancora;
+   *   - il riarmo dopo SILENZIO e' lento e soprattutto CONTATO: dopo qualche
+   *     ciclo a vuoto ci si ferma e serve un tocco. Guidare in silenzio non
+   *     deve tenere il microfono aperto per ore;
+   *   - gli ERRORI arretrano e poi aprono il circuito.
+   *
+   * Un comando riuscito azzera entrambi i contatori.
+   */
+  rearm: {
+    /** Attesa dopo un comando riconosciuto, ms. */
+    afterCommandMs: 800,
+    /** Attesa dopo una sessione chiusa senza aver sentito nulla, ms. */
+    afterSilenceMs: 4000,
+    /**
+     * Attesa dopo che ROAD SENSE ha finito di parlare, ms.
+     * Serve a non raccogliere la coda della propria voce sintetica.
+     */
+    afterSpeechMs: 700,
+    /**
+     * Sessioni silenziose consecutive oltre le quali si smette.
+     * E' il limite che rende impossibile il vecchio ciclo infinito.
+     */
+    maxSilentCycles: 3,
+    /** Arretramento dopo errori consecutivi, ms. Esaurito, si apre il circuito. */
+    errorBackoffMs: [2000, 5000, 10_000] as readonly number[],
+  },
   session: {
     /**
      * Quanto si resta in ascolto se non succede nulla, ms.

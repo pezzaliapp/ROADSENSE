@@ -998,8 +998,9 @@ export default function App() {
    * puo' segnalare anche da fermi, esattamente come col pulsante SEGNALA.
    */
   const startVoice = useCallback(() => {
-    // Sessione gia' aperta: un secondo tocco non apre un secondo microfono.
-    if (voiceRef.current?.isListening?.()) return;
+    // Ascolto gia' attivo - in sessione o in attesa di riarmarsi: un secondo
+    // tocco non deve aprire una catena parallela.
+    if (voiceRef.current?.isArmed?.() || voiceRef.current?.isListening?.()) return;
 
     // In demo la voce e' recitata: nessun microfono, nulla da autorizzare.
     if (demo) {

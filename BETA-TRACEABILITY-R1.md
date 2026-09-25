@@ -807,4 +807,50 @@ Nessun ID è stato promosso a PASS da questa correzione: rende più solida l'evi
 ROAD-09, NOW-ROAD-06 e NOW-FLOW-04, che restano PARTIAL. **ROUTE-02 resta PARTIAL** finché
 il ramo `road-geometry` non è verificato su dispositivo reale.
 
-*Aggiornato al termine della Fase 1 — riferimento: `ROAD-SENSE-BETA-MASTER-R1.md`*
+---
+
+## Riarmo controllato della voce (blocker Beta)
+
+### Evidenza dal test reale sul Samsung Fold — PRIMA del fix
+
+```
+START → VOCE → "Buca" → riconosciuta → evento creato → mappa → EVENTI = 1
+     → subito dopo: VOCE OFF
+```
+
+**Hands-free = FALLITO.** Il riconoscimento funzionava; la sessione terminava e nessuno
+la riapriva. Causa esatta: `BrowserVoiceProvider.onresult` chiamava `closeSession('off')`
+e `onend` dichiarava «NESSUN riavvio». Lo stato `restarting` (`VOCE ~`) esisteva in UI ma
+non veniva mai emesso.
+
+### Dopo il fix
+
+Ogni chiusura porta un **motivo** (`command` · `silence` · `error` · `denied` · `stopped` ·
+`speaking`) e il motivo decide se e quando si riapre. Un comando riuscito azzera i
+contatori; il silenzio ha un budget di 3 cicli; gli errori arretrano e poi aprono il
+circuito; STOP disarma prima di chiudere.
+
+| ID | Prima | Dopo | Nota |
+|---|---|---|---|
+| VOICE-IN-01 | MISSING | **DEVICE TEST** | riarmo implementato e testato in automatico |
+| VOICE-IN-03 | MISSING | **DEVICE TEST** | idem |
+| VOICE-IN-04 | MISSING | **DEVICE TEST** | «buca → ostacolo → acqua» verde in automatico |
+| VOICE-LIFE-03 | MISSING | **PASS** | backoff e attese differenziate per motivo |
+| VOICE-LIFE-04 | MISSING | **PASS** | circuito aperto dopo 3 errori o 3 silenzi |
+| VOICE-LIFE-06 | PASS (vacuo) | **PARTIAL** | da vacuo a sostanziale: resta da verificare durante una telefonata reale |
+| SELF-04 | MISSING | **DEVICE TEST** | `resume()` riapre dopo la voce sintetica |
+| SELF-05 | MISSING | **DEVICE TEST** | nessun tocco richiesto dopo il TTS |
+| BETA-01 | MISSING | **DEVICE TEST** | — |
+| BETA-02 | MISSING | **DEVICE TEST** | — |
+
+**Nessuna promozione a PASS per gli ID hands-free.** I test automatici usano un
+riconoscitore finto: non dimostrano il comportamento di Chrome Android. Restano
+**DEVICE TEST** finché sul Fold non si ripete, senza toccare il telefono:
+
+```
+"Buca" → "Ostacolo" → "Acqua"
+```
+
+verificando inoltre che il tono di attivazione **non** suoni ciclicamente nel silenzio.
+
+*Aggiornato dopo il riarmo controllato — riferimento: `ROAD-SENSE-BETA-MASTER-R1.md`*
