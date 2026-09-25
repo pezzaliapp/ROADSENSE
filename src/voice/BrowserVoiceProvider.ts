@@ -54,22 +54,7 @@
  * consegna due volte lo stesso risultato - capita su Android - non puo'
  * produrre due segnalazioni.
  *
- * ESPERIMENTO IN CORSO: SESSIONE LUNGA
- * Il test su strada ha mostrato che Android emette il proprio tono di
- * attivazione a ogni `recognition.start()`. Con una sessione per comando quel
- * tono suonava a ogni frase, per tutto il viaggio. Nessun timer lo risolve:
- * il tono e' del sistema operativo e non e' sopprimibile.
- *
- * L'unica strada e' non riaprire. Questa versione prova a tenere viva UNA
- * sessione con `continuous = true`, consegnando piu' comandi dalla stessa,
- * senza chiuderla dopo ogni risultato e senza un timeout nostro.
- *
- * Se Chrome Android onora `continuous`, il tono suona una volta sola. Se non
- * lo onora, il riarmo controllato resta come rete di sicurezza e il
- * comportamento non peggiora rispetto a oggi. Lo dice il pannello
- * ?debugVoice=1, che numera le sessioni.
- *
- * RIARMO CONTROLLATO: ORA ECCEZIONALE, NON PIU' IL RITMO DEL SISTEMA
+ * RIARMO CONTROLLATO, NON IL VECCHIO CICLO
  * Chiusa la sessione, ROAD SENSE puo' riaprirne un'altra da solo: e' cio' che
  * permette di dire "buca", poi "ostacolo", poi "acqua" senza toccare il
  * telefono.
@@ -258,16 +243,11 @@ export class BrowserVoiceProvider implements VoiceProvider {
   /** Una sessione e' aperta in questo momento. */
   private active = false;
   /**
-   * Indice dell'ultimo risultato consegnato in QUESTA sessione.
-   *
-   * Con `continuous = true` i risultati si accumulano in `event.results` e
-   * il browser puo' riconsegnare lo stesso indice piu' volte. Ricordare fino
-   * a dove si e' arrivati e' cio' che rende «buca, ostacolo, acqua» tre
-   * comandi e un risultato duplicato uno solo.
+   * La sessione ha gia' consegnato una frase.
+   * Un risultato in piu' - duplicato dal browser, o arrivato mentre si
+   * chiude - viene ignorato: una pronuncia, una segnalazione.
    */
-  private lastDeliveredIndex = -1;
-  /** Numero progressivo della sessione. Serve solo alla diagnosi. */
-  private sessionNo = 0;
+  private delivered = false;
   /**
    * Generazione della sessione corrente.
    * Ogni rilascio la incrementa: un evento in ritardo da un riconoscitore
@@ -330,6 +310,7 @@ export class BrowserVoiceProvider implements VoiceProvider {
     if (this.active) return;
     this.handlers = handlers;
     this.trail = [];
+    this.delivered = false;
     this.report({ lastError: null, events: '' });
 
     const ctor = this.env.ctor();
@@ -403,17 +384,11 @@ export class BrowserVoiceProvider implements VoiceProvider {
 
     const gen = this.generation;
     const mine = (): boolean => gen === this.generation && this.active;
-    this.lastDeliveredIndex = -1;
-    this.sessionNo++;
-    this.report({ session: this.sessionNo });
-    this.mark(`S${this.sessionNo}`);
 
     recognition.lang = VOICE.lang;
-    // ESPERIMENTO: si chiede al browser di tenere viva la sessione dopo il
-    // primo risultato. E' l'unica configurazione che puo' evitare un tono di
-    // Android per ogni comando. Su Chrome Android non e' garantita: il
-    // pannello di diagnosi dira' se e' stata onorata.
-    recognition.continuous = true;
+    // Una sessione, una frase. `continuous` terrebbe aperto il microfono
+    // anche dopo il comando, che e' esattamente cio' che si vuole evitare.
+    recognition.continuous = false;
     // Solo risultati definitivi: un parziale non deve diventare un evento.
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
@@ -439,50 +414,32 @@ export class BrowserVoiceProvider implements VoiceProvider {
       this.mark('speechstart');
       this.phase('speech');
     };
-    recognition.onspeechend = () => {
-      if (!mine()) return;
-      this.mark('speechend');
-      this.phase('listening');
-    };
-    recognition.onsoundend = () => {
-      if (mine()) this.mark('soundend');
-    };
-    recognition.onaudioend = () => {
-      if (mine()) this.mark('audioend');
-    };
     recognition.onnomatch = () => {
       if (mine()) this.mark('nomatch');
     };
 
     recognition.onresult = (event) => {
-      if (!mine()) return;
+      if (!mine() || this.delivered) return;
       this.mark('result');
-
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        // Gia' consegnato: e' il browser che ripete, non chi guida.
-        if (i <= this.lastDeliveredIndex) continue;
         const result = event.results[i];
         if (!result?.isFinal) continue;
         const transcript = result[0]?.transcript ?? '';
         if (transcript.trim().length === 0) continue;
 
-        this.lastDeliveredIndex = i;
-        // Un comando riuscito azzera i budget di recovery.
-        this.silentCycles = 0;
-        this.errorCount = 0;
+        // La prima frase utile chiude la sessione: un risultato duplicato
+        // non puo' produrre una seconda segnalazione.
+        this.delivered = true;
         this.phase('result');
         this.report({ lastPhrase: transcript.trim() });
-
-        // LA SESSIONE NON VIENE CHIUSA: e' il punto dell'esperimento.
-        // Consegnare puo' pero' far parlare ROAD SENSE, e allora `pause()`
-        // chiude la sessione da fuori: da quel momento i risultati
-        // successivi non sono piu' nostri.
-        this.handlers.onTranscript?.(transcript);
-        if (!mine()) return;
+        const consegna = this.handlers.onTranscript;
+        // Un comando riuscito: i contatori ripartono e l'ascolto si riapre.
+        this.silentCycles = 0;
+        this.errorCount = 0;
+        this.closeSession('off', 'command');
+        consegna?.(transcript);
+        return;
       }
-
-      // Consegnato tutto il consegnabile, si resta in ascolto.
-      if (this.active) this.phase('listening');
     };
 
     recognition.onerror = (event) => {
@@ -495,10 +452,9 @@ export class BrowserVoiceProvider implements VoiceProvider {
     recognition.onend = () => {
       if (!mine()) return;
       this.mark('end');
-      // Il browser ha chiuso. Se la sessione aveva consegnato comandi si
-      // riapre subito - chi parlava probabilmente parlera' ancora; se era
-      // muta, consuma il budget di silenzio.
-      this.closeSession('off', this.lastDeliveredIndex >= 0 ? 'command' : 'silence');
+      // Chiusura senza che sia arrivata una frase: per il browser e' finita,
+      // per noi e' silenzio. Si riapre, ma un numero contato di volte.
+      this.closeSession('off', 'silence');
     };
 
     this.recognition = recognition;
@@ -512,9 +468,14 @@ export class BrowserVoiceProvider implements VoiceProvider {
       return;
     }
 
-    // ESPERIMENTO: nessun timeout nostro. Una sessione sana non va chiusa da
-    // noi, perche' ogni chiusura costa un tono di Android alla riapertura.
-    // A terminarla sara' il browser, quando decide lui.
+    // Se non succede nulla la sessione si chiude da sola, senza lasciare il
+    // microfono aperto e senza riprovare.
+    this.timeoutTimer = this.env.setTimeout(() => {
+      this.timeoutTimer = null;
+      if (!mine()) return;
+      this.mark('timeout');
+      this.closeSession('off', 'silence');
+    }, VOICE.session.timeoutMs);
   }
 
   private handleError(error: string): void {
@@ -620,6 +581,7 @@ export class BrowserVoiceProvider implements VoiceProvider {
       const ctor = this.env.ctor();
       if (!ctor) return;
       this.active = true;
+      this.delivered = false;
       this.open(ctor, this.capabilities().onDevice);
     }, delayMs);
   }

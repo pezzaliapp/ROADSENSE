@@ -205,7 +205,6 @@ export default function App() {
     lastError: null,
     lastPhrase: null,
     events: '',
-    session: 0,
     permissionsApi: 'non disponibile',
     permissionsValue: '--',
     getUserMedia: 'non tentato',

@@ -101,14 +101,6 @@ export interface VoiceDiagnostics {
    */
   events: string;
   /**
-   * Numero progressivo della sessione di riconoscimento.
-   *
-   * E' il dato che dice se Chrome Android ha onorato `continuous`: tre
-   * comandi nella sessione 1 significa una sola apertura, quindi un solo
-   * tono di sistema. Tre sessioni significa che non l'ha onorato.
-   */
-  session: number;
-  /**
    * DIAGNOSI DEL PERMESSO MICROFONO (solo ?debugVoice=1).
    *
    * Due canali separati, perche' possono divergere: la Permissions API

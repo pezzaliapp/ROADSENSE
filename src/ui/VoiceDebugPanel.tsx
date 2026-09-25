@@ -38,7 +38,6 @@ export function VoiceDebugPanel({ diagnostics }: Props) {
     lastError,
     lastPhrase,
     events,
-    session,
     permissionsApi,
     permissionsValue,
     getUserMedia,
@@ -77,9 +76,6 @@ export function VoiceDebugPanel({ diagnostics }: Props) {
       {/* Gli eventi REALI emessi da SpeechRecognition, nell'ordine in cui
           sono arrivati. E' il dato che dice dove si ferma la catena su un
           telefono che non si ha in mano. */}
-      {/* Il numero che decide l'esperimento: una sola sessione per piu'
-          comandi significa un solo tono di attivazione Android. */}
-      <Row label="SESSIONE" value={session > 0 ? `#${session}` : '--'} tone={session > 0 ? 'ok' : ''} />
       <Row label="EVENTI" value={events || '--'} />
       <Row label="ULTIMO ERRORE" value={lastError ?? '--'} tone={lastError ? 'bad' : ''} />
       <Row label="ULTIMA FRASE" value={lastPhrase ?? '--'} />

@@ -853,4 +853,37 @@ riconoscitore finto: non dimostrano il comportamento di Chrome Android. Restano
 
 verificando inoltre che il tono di attivazione **non** suoni ciclicamente nel silenzio.
 
-*Aggiornato dopo il riarmo controllato — riferimento: `ROAD-SENSE-BETA-MASTER-R1.md`*
+---
+
+## Esperimento `continuous = true` — FALLITO (Samsung Fold)
+
+Commit sperimentale `e24746b`, revertito. Nessun requisito promosso.
+
+### Esito del test reale
+
+| | |
+|---|---|
+| Sessione long-lived con `continuous = true` | **FAILED** |
+| Bip di attivazione Android | **persistente**, identico a prima |
+| Regressione 1 | posizionamento/indicazione dell'alert sulla mappa non mantenuto dopo la segnalazione vocale |
+| Regressione 2 | scomparso il riquadro arancione di conferma dopo la segnalazione |
+
+**Conclusione:** la sessione Web Speech Recognition long-lived **non è validata**
+come soluzione al tono di attivazione su Chrome Android. Il bip è emesso dal servizio
+di riconoscimento del sistema operativo e non è sopprimibile da una pagina web.
+
+### Stato dei requisiti dopo il revert
+
+Il codice è tornato a `da8dbc8`: riarmo controllato funzionante, con un bip per ciclo.
+
+| ID | Stato | Motivo |
+|---|---|---|
+| VOICE-IN-01 | **DEVICE TEST** | il meccanismo funziona sul Fold, ma il bip a ogni riarmo rende l'uso in guida inaccettabile: l'accettazione non è raggiunta |
+| VOICE-IN-03 | **DEVICE TEST** | idem |
+| VOICE-IN-04 | **DEVICE TEST** | idem |
+| BETA-01 | **DEVICE TEST** | dipende da VOICE-IN-01 |
+| BETA-02 | **DEVICE TEST** | dipende da VOICE-IN-04 |
+
+**Nessun PASS.** Il riconoscimento e il riarmo funzionano; l'esperienza d'uso no.
+
+*Aggiornato dopo il revert dell'esperimento — riferimento: `ROAD-SENSE-BETA-MASTER-R1.md`*
