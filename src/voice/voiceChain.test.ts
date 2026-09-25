@@ -532,36 +532,55 @@ describe('consenso all\'elaborazione remota dell\'audio', () => {
     expect(stati).toContain('listening');
   });
 
-  it('il consenso richiede DUE tocchi e non viene ricordato fra sessioni', () => {
-    // Primo tocco: si chiede. Secondo: si autorizza.
-    expect(app).toMatch(/setVoiceConsent\('pending'\)/);
-    expect(app).toMatch(/setVoiceConsent\('granted'\)/);
-    // Vive in memoria: nessuna persistenza.
-    expect(app).not.toMatch(/voiceConsent[\s\S]{0,80}localStorage/);
+  // Il consenso all'elaborazione REMOTA non esiste piu', perche' non esiste
+  // piu' l'elaborazione remota: il decoder e' locale. Al suo posto si verifica
+  // l'invariante nuova, che e' piu' forte - non "l'utente ha accettato che
+  // l'audio parta", ma "l'audio non parte".
+
+  it('ROAD SENSE non chiede piu alcun consenso remoto, perche non serve', () => {
+    expect(app).not.toMatch(/setVoiceConsent/);
+    expect(app).not.toMatch(/servizio esterno/);
+    expect(app).not.toMatch(/audio verrebbe inviato/);
   });
 
-  it('il testo mostrato dice cosa accadrebbe e cosa fare', () => {
-    expect(app).toMatch(/non elabora la voce sul dispositivo/);
-    expect(app).toMatch(/audio verrebbe inviato a un servizio esterno/);
-    expect(app).toMatch(/Tocca di nuovo VOCE per accettare/);
+  it('il percorso di produzione usa il decoder LOCALE', () => {
+    expect(app).toMatch(/VoskVoiceProvider/);
+    // Il vecchio provider non viene piu' costruito dall'applicazione.
+    expect(app).not.toMatch(/new BrowserVoiceProvider/);
   });
 
-  it('non dichiara mai "voce attiva" quando non lo e\'', () => {
-    // Il messaggio di attivazione compare solo nei rami che accendono davvero.
-    const richiesta = app.slice(app.indexOf("setVoiceConsent('pending')"));
-    const finoAlRitorno = richiesta.slice(0, richiesta.indexOf('return;'));
-    expect(finoAlRitorno).not.toMatch(/Voce attiva/);
+  it('nessuna API di riconoscimento del sistema nel percorso di produzione', () => {
+    // E' il requisito che ha fatto fallire tre test su strada: ogni
+    // `recognition.start()` su Android emette un tono che nessuna pagina web
+    // puo' spegnere. Qui si verifica che quella chiamata non esista.
+    for (const file of ['App.tsx']) {
+      const code = readFileSync(resolve(ROOT, 'src', file), 'utf8');
+      expect(code).not.toMatch(/\bwebkitSpeechRecognition\b/);
+      expect(code).not.toMatch(/new SpeechRecognition\b/);
+    }
+    const provider = readFileSync(
+      resolve(ROOT, 'src', 'voice', 'local', 'VoskVoiceProvider.ts'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    expect(provider).not.toContain('SpeechRecognition');
   });
 
-  it('in demo non serve alcun consenso: nulla lascia il dispositivo', () => {
-    // La demo recita una traccia: nessun microfono, nessun audio, niente da
-    // autorizzare. Il ramo esce prima di qualsiasi consenso.
+  it('il primo scaricamento del modello e dichiarato a chi guida', () => {
+    // 47 MB: senza avviso il pulsante VOCE sembrerebbe non rispondere.
+    expect(app).toMatch(/PREPARAZIONE VOCE/);
+    // E si dice che il resto funziona comunque, invece di lasciarlo intuire.
+    expect(app).toMatch(/puoi usare ROAD SENSE/);
+  });
+
+  it('in demo nulla lascia il dispositivo e nessun microfono si apre', () => {
+    // La demo recita una traccia: nessun microfono, nessun audio.
     const inizio = app.indexOf('const startVoice = useCallback');
     const corpo = app.slice(inizio, app.indexOf('  }, [', inizio));
     const demo = corpo.indexOf('if (demo)');
-    const consenso = corpo.indexOf('voiceConsent');
+    const microfono = corpo.indexOf('new VoskVoiceProvider');
     expect(demo).toBeGreaterThan(-1);
-    expect(demo).toBeLessThan(consenso);
+    // Il ramo della demo esce PRIMA che si costruisca il provider reale.
+    expect(demo).toBeLessThan(microfono);
     expect(corpo).toMatch(/new DemoVoiceProvider/);
   });
 });

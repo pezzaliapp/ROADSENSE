@@ -43,8 +43,9 @@
 
 import { Model, type KaldiRecognizer } from 'vosk-browser';
 
-/** Le quattro parole del test, piu' la via d'uscita. */
-export const LAB_GRAMMAR: readonly string[] = ['buca', 'ostacolo', 'acqua', 'incidente', '[unk]'];
+import { VOICE_GRAMMAR as GRAMMATICA } from './grammar';
+
+export { VOICE_GRAMMAR } from './grammar';
 
 export interface WordScore {
   word: string;
@@ -301,7 +302,7 @@ export class LocalRecognizer {
 
       this.stats_.modelLoads++;
 
-      const recognizer = new model.KaldiRecognizer(sampleRate, JSON.stringify(LAB_GRAMMAR));
+      const recognizer = new model.KaldiRecognizer(sampleRate, JSON.stringify(GRAMMATICA));
       this.stats_.recognizerCreates++;
       // Necessario per ottenere la confidenza parola per parola: senza questo
       // arriva solo il testo, e non si potrebbe distinguere un riconoscimento

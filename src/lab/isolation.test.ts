@@ -1,14 +1,14 @@
 /**
- * ROAD SENSE / LABORATORIO FASE 0 - verifiche sul sorgente, non sul
- * comportamento.
+ * ROAD SENSE - verifiche sul sorgente della catena vocale locale.
  *
- * Due promesse sono state fatte per questo prototipo, e nessuna delle due si
- * puo' dimostrare con un test funzionale:
+ * Nate per il prototipo, adesso valgono per la produzione: dopo l'integrazione
+ * sono gli STESSI moduli a servire ROAD SENSE e il laboratorio. Due promesse
+ * che nessun test funzionale puo' dimostrare:
  *
- *   1. il riconoscimento e' davvero locale: nessun `SpeechRecognition`,
- *      nessun servizio, nessuna registrazione, nessuna trasmissione;
- *   2. il prototipo e' davvero isolato: non tocca la pipeline di ROAD SENSE,
- *      ne' in un verso ne' nell'altro.
+ *   1. il riconoscimento e' davvero locale: nessun `SpeechRecognition`, nessun
+ *      servizio, nessuna registrazione, nessuna trasmissione dell'audio;
+ *   2. la voce consegna TESTO e non decide niente: non tocca gli engine, e la
+ *      pagina diagnostica non entra nell'applicazione.
  *
  * Una promessa del genere si verifica leggendo il codice. Questo file lo fa a
  * ogni `npm test`, cosi' che romperla richieda di rompere anche un test invece
@@ -25,14 +25,30 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const LAB_DIR = join(process.cwd(), 'src', 'lab');
+/** I moduli audio ora vivono qui: li usa ROAD SENSE, non piu' solo il laboratorio. */
+const LOCAL_DIR = join(process.cwd(), 'src', 'voice', 'local');
 const WORKLET = join(process.cwd(), 'public', 'lab', 'pcmTap.worklet.js');
 const PAGE = join(process.cwd(), 'voice-lab.html');
 
-/** Codice del laboratorio, senza i test e senza commenti. */
+/**
+ * Codice della catena vocale locale, senza i test e senza commenti.
+ *
+ * Comprende il laboratorio E i moduli condivisi sotto `src/voice/local/`: dopo
+ * l'integrazione sono gli stessi file a servire ROAD SENSE, quindi le garanzie
+ * valgono per entrambi. Non esistono due implementazioni della voce.
+ */
 function labCode(): { file: string; code: string }[] {
-  const files = readdirSync(LAB_DIR).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'));
-  expect(files.length).toBeGreaterThan(0);
-  const out = files.map((f) => ({ file: `src/lab/${f}`, code: stripJs(readFileSync(join(LAB_DIR, f), 'utf8')) }));
+  const out: { file: string; code: string }[] = [];
+  for (const [dir, prefisso] of [
+    [LAB_DIR, 'src/lab'],
+    [LOCAL_DIR, 'src/voice/local'],
+  ] as const) {
+    const files = readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'));
+    expect(files.length, `${prefisso} vuota`).toBeGreaterThan(0);
+    for (const f of files) {
+      out.push({ file: `${prefisso}/${f}`, code: stripJs(readFileSync(join(dir, f), 'utf8')) });
+    }
+  }
   out.push({ file: 'public/lab/pcmTap.worklet.js', code: stripJs(readFileSync(WORKLET, 'utf8')) });
   return out;
 }
@@ -48,6 +64,10 @@ function stripHtml(source: string): string {
 describe('il riconoscimento e locale: nessuna API di sistema, nessuna rete', () => {
   // Il requisito posto esplicitamente: niente riconoscimento di sistema, da cui
   // dipendevano sia il tono di attivazione sia l'invio dell'audio a un servizio.
+  // `fetch(` non e' piu' nell'elenco: serve a scaricare i pezzi del MODELLO
+  // dalla nostra origine, cioe' dati che vengono VERSO il dispositivo. Che non
+  // esca audio e' garantito dalle voci che restano - nessun registratore,
+  // nessun canale di invio - e dal test sulle origini esterne qui sopra.
   const vietati = [
     'SpeechRecognition',
     'webkitSpeechRecognition',
@@ -56,7 +76,6 @@ describe('il riconoscimento e locale: nessuna API di sistema, nessuna rete', () 
     'WebSocket',
     'sendBeacon',
     'EventSource',
-    'fetch(',
   ];
 
   it.each(vietati)('il codice del laboratorio non contiene %s', (vietato) => {
@@ -78,14 +97,17 @@ describe('il riconoscimento e locale: nessuna API di sistema, nessuna rete', () 
     }
   });
 
-  it('l unico URL di rete e il modulo del worklet, servito dalla nostra origine', () => {
+  it('gli unici URL sono della nostra origine: worklet e pezzi del modello', () => {
     const micSession = labCode().find((f) => f.file.endsWith('micSession.ts'));
     expect(micSession).toBeDefined();
     expect(micSession?.code).toContain("'/lab/pcmTap.worklet.js'");
-    // Nessuna origine esterna nel codice del laboratorio.
+    // Nessuna origine esterna: ne' per il codice, ne' per il modello.
     for (const { file, code } of labCode()) {
       expect(code, `${file} nomina un'origine esterna`).not.toMatch(/https?:\/\//);
     }
+    const modello = labCode().find((f) => f.file.endsWith('modelChunks.ts'));
+    // Percorso relativo alla nostra origine, non un dominio.
+    expect(modello?.code).toContain('/assets/model/');
   });
 });
 
@@ -106,6 +128,8 @@ describe('il laboratorio e isolato da ROAD SENSE', () => {
     'BrowserVoiceProvider',
     'maplibre',
   ];
+  // `VoiceProvider` (il contratto) e' lecito: il provider locale lo implementa.
+  // Gli ENGINE no: la voce consegna testo e non decide niente.
 
   it.each(pipeline)('non fa riferimento a %s', (nome) => {
     for (const { file, code } of labCode()) {
@@ -113,28 +137,39 @@ describe('il laboratorio e isolato da ROAD SENSE', () => {
     }
   });
 
-  it('non importa nulla fuori da src/lab', () => {
+  it('importa solo cio che gli serve: moduli locali, config e il contratto voce', () => {
+    const ammessi = new Set([
+      'vosk-browser',
+      '../voice/local/grammar',
+      '../voice/local/micSession',
+      '../voice/local/ringBuffer',
+      '../voice/local/speechGate',
+      '../voice/local/utteranceCapture',
+      '../voice/local/voskRecognizer',
+      '../../config/config',
+      '../VoiceProvider',
+    ]);
     for (const { file, code } of labCode()) {
       for (const match of code.matchAll(/from\s+'([^']+)'/g)) {
         const spec = match[1] as string;
-        const lecito = spec.startsWith('./') || spec === 'vosk-browser' || spec.startsWith('node:');
+        const lecito = spec.startsWith('./') || spec.startsWith('node:') || ammessi.has(spec);
         expect(lecito, `${file} importa ${spec}`).toBe(true);
       }
-      // Nessuna risalita verso l'applicazione, in nessuna forma.
-      expect(code, `${file} risale fuori da src/lab`).not.toContain("from '../");
     }
   });
 
-  it('ROAD SENSE non importa il laboratorio', () => {
-    // La direzione opposta conta altrettanto: il prototipo non deve poter
-    // entrare nel bundle dell'applicazione per una svista.
+  it('la pagina diagnostica non entra nell applicazione', () => {
+    // Il laboratorio resta uno strumento: la sua interfaccia non deve comparire
+    // in ROAD SENSE, nemmeno per una svista di import.
     const sorgenti = collectSources(join(process.cwd(), 'src'));
     for (const file of sorgenti) {
-      if (file.includes(`${join('src', 'lab')}`)) continue;
+      if (file.includes(join('src', 'lab'))) continue;
       const code = stripJs(readFileSync(file, 'utf8'));
-      expect(code, `${file} importa dal laboratorio`).not.toMatch(/from\s+'[^']*lab\//);
+      expect(code, `${file} importa la pagina diagnostica`).not.toMatch(/from\s+'[^']*lab\//);
     }
   });
+
+
 });
 
 function collectSources(dir: string): string[] {

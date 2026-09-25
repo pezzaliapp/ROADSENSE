@@ -25,11 +25,12 @@
  *   5. Venti minuti senza che il microfono cada.
  */
 
-import { MicSession, type OutputMode } from './micSession';
-import { RingBuffer } from './ringBuffer';
-import { DEFAULT_GATE, SpeechGate, type SpeechGateConfig } from './speechGate';
-import { UtteranceCapture } from './utteranceCapture';
-import { LAB_GRAMMAR, LocalRecognizer, type LabResult } from './voskRecognizer';
+import { MicSession, type OutputMode } from '../voice/local/micSession';
+import { RingBuffer } from '../voice/local/ringBuffer';
+import { DEFAULT_GATE, SpeechGate, type SpeechGateConfig } from '../voice/local/speechGate';
+import { UtteranceCapture } from '../voice/local/utteranceCapture';
+import { VOICE_GRAMMAR } from '../voice/local/grammar';
+import { LocalRecognizer, type LabResult } from '../voice/local/voskRecognizer';
 
 /** Secondi di audio conservati. Tre bastano: un enunciato dura meno di due. */
 const RING_SECONDS = 3;
@@ -216,7 +217,7 @@ ui.modelHint.textContent =
   'Il campo URL e’ un’alternativa diagnostica e puo’ restare vuoto.';
 
 log('Pagina pronta. Nessun microfono aperto.');
-log(`Grammatica: ${LAB_GRAMMAR.join(' / ')}`);
+log(`Grammatica: ${VOICE_GRAMMAR.join(' / ')}`);
 
 // ---------------------------------------------------------------------------
 // START / STOP

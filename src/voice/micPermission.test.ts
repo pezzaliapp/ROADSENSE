@@ -334,11 +334,13 @@ describe('vincoli strutturali', () => {
     expect(codice).not.toMatch(/browserMicEnvironment\(\)[\s\S]{0,40}requestMicrophone/);
   });
 
-  it('il consenso all\'elaborazione remota resta una decisione separata', () => {
-    // Il microfono e' un permesso di sistema; mandare l'audio a un servizio
-    // esterno e' un'altra cosa, e ha il suo consenso esplicito.
-    expect(senzaCommenti).toMatch(/setVoiceConsent\('pending'\)/);
-    expect(senzaCommenti).toMatch(/setVoiceConsent\('granted'\)/);
+  it('resta UNA sola decisione: il permesso del microfono', () => {
+    // Prima ce n'erano due: il permesso di sistema e il consenso all'invio
+    // dell'audio a un servizio esterno. La seconda e' scomparsa insieme
+    // all'elaborazione remota - il decoder e' locale, l'audio non parte -
+    // e chiedere un consenso per qualcosa che non avviene sarebbe falso.
+    expect(senzaCommenti).not.toMatch(/setVoiceConsent/);
+    expect(senzaCommenti).toMatch(/VoskVoiceProvider/);
     const modulo = readFileSync(resolve(ROOT, 'src/voice/micPermission.ts'), 'utf8');
     expect(modulo).not.toMatch(/voiceConsent|allowRemote|processLocally/);
   });

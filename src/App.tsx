@@ -39,11 +39,9 @@ import { DEMO_ROUTE } from './demo/demoRoute';
 import { DEMO_ROUTE_CENTER } from './demo/demoRoute';
 import { DemoTrafficProvider } from './demo/DemoTrafficProvider';
 import {
-  BrowserVoiceProvider,
-  onDeviceStateNow,
-  probeOnDevice,
-  selectedVoiceApi,
-} from './voice/BrowserVoiceProvider';
+  VoskVoiceProvider,
+  type VoiceModelPhase,
+} from './voice/local/VoskVoiceProvider';
 import { DemoVoiceProvider } from './voice/DemoVoiceProvider';
 import type { VoiceDiagnostics, VoiceProvider, VoiceStatus } from './voice/VoiceProvider';
 import type { DetectionTelemetry } from './core/DetectionEngine';
@@ -156,17 +154,16 @@ export default function App() {
   // Lo stato della voce vive in `status.voice`: "ascolto in corso" non e' un
   // interruttore che l'utente lascia acceso, e' la durata di una sessione.
   /**
-   * Consenso all'elaborazione REMOTA dell'audio.
+   * Primo scaricamento del modello vocale.
    *
-   *   none     non richiesto, o non ancora dato
-   *   pending  chiesto, in attesa della seconda conferma
-   *   granted  dato esplicitamente
-   *
-   * Vive in memoria e non viene ricordato fra una sessione e l'altra: un
-   * consenso a inviare audio a un servizio esterno va ridato consapevolmente,
-   * non ereditato da una decisione presa settimane prima.
+   * Non e' diagnostica: sono 47 MB, e chi tocca VOCE ha diritto di sapere che
+   * sta succedendo qualcosa invece di vedere un pulsante che non risponde.
+   * Scaricati una volta, restano nella cache del browser.
    */
-  const [voiceConsent, setVoiceConsent] = useState<'none' | 'pending' | 'granted'>('none');
+  const [voiceModel, setVoiceModel] = useState<{ phase: VoiceModelPhase; percent: number }>({
+    phase: 'assente',
+    percent: 0,
+  });
 
   /**
    * Diagnosi della catena vocale. Esiste solo con ?debugVoice=1 e non lascia
@@ -796,7 +793,9 @@ export default function App() {
    */
   useEffect(() => {
     if (!voiceDebug) return;
-    pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() });
+    // Nessuna API di riconoscimento del sistema da interrogare: il decoder e'
+    // nostro e sta nel dispositivo, quindi l'elaborazione locale e' un fatto.
+    pushDiagnostics({ api: 'assente', local: 'si', remote: false });
   }, [voiceDebug, pushDiagnostics, running]);
 
   /**
@@ -832,17 +831,15 @@ export default function App() {
    * Durante una sessione lo stato lo detta il provider.
    */
   useEffect(() => {
-    const supported = demo || new BrowserVoiceProvider().capabilities().supported;
+    const supported = demo || new VoskVoiceProvider().capabilities().supported;
     if (!supported) {
       setStatus((s) => ({ ...s, voice: 'unsupported' }));
       return;
     }
-    if (voiceConsent === 'pending') {
-      setStatus((s) => ({ ...s, voice: 'consent' }));
-      return;
-    }
+    // Non si chiede piu' alcun consenso per l'invio dell'audio: non viene
+    // inviato da nessuna parte. Il riconoscimento avviene nel dispositivo.
     setStatus((s) => (s.voice === 'listening' ? s : { ...s, voice: 'ready' }));
-  }, [demo, voiceConsent]);
+  }, [demo]);
 
   // `startVoice` e' definita dopo `handleTranscript`, che le serve.
 
@@ -1011,48 +1008,29 @@ export default function App() {
     }
 
     // Verifica del supporto: sincrona, non cede il controllo al browser.
-    const caps = new BrowserVoiceProvider().capabilities();
-    if (!caps.supported) {
+    const provider = new VoskVoiceProvider();
+    if (!provider.capabilities().supported) {
       setStatus((st) => ({ ...st, voice: 'unsupported' }));
       return;
     }
 
-    // Primo tocco senza elaborazione locale confermata: si chiede il consenso
-    // all'invio dell'audio a un servizio esterno. E' una decisione su DOVE
-    // finisce la voce, e resta separata dal permesso del microfono.
-    if (!caps.onDevice && voiceConsent === 'none') {
-      setVoiceConsent('pending');
-      showToast(
-        "Questo browser non elabora la voce sul dispositivo: l'audio verrebbe inviato a un servizio esterno. Tocca di nuovo VOCE per accettare.",
-      );
-      return;
-    }
-    const remote = !caps.onDevice;
-    if (remote && voiceConsent !== 'granted') setVoiceConsent('granted');
-
     // >>> NESSUN await sopra questa riga. <<<
-    // `start()` arriva a `recognition.start()` senza cedere il controllo: su
-    // Android e' quella chiamata a far comparire la richiesta del microfono,
-    // e un'attesa interposta farebbe decadere l'attivazione del tocco.
-    const provider = new BrowserVoiceProvider(remote);
+    // `start()` arriva a `getUserMedia` senza cedere il controllo: su Android e'
+    // quella chiamata a far comparire la richiesta del microfono, e un'attesa
+    // interposta farebbe decadere l'attivazione del tocco. Il modello - 47 MB -
+    // si carica DOPO, fuori dal gesto.
     voiceRef.current = provider;
-    // La voce parlata deve poter chiudere questa sessione mentre parla.
+    // La voce parlata deve poter sospendere l'ascolto mentre parla.
     speechRef.current.setHandlers({ onSpeakingChange: handleSpeakingChange });
     provider.start({
       onTranscript: handleTranscript,
       onStatus: handleVoiceStatus,
+      onModelProgress: (phase, progress) =>
+        setVoiceModel({ phase, percent: Math.round((progress?.ratio ?? 0) * 100) }),
       ...(voiceDebug ? { onDiagnostics: pushDiagnostics } : {}),
     });
-
-    // Da qui in poi si puo' attendere: sono dati per la diagnosi e per la
-    // sessione successiva, non condizioni di avvio.
-    void probeOnDevice().then(() =>
-      pushDiagnostics({ api: selectedVoiceApi(), local: onDeviceStateNow() }),
-    );
   }, [
     demo,
-    voiceConsent,
-    showToast,
     handleTranscript,
     handleVoiceStatus,
     handleSpeakingChange,
@@ -1155,13 +1133,27 @@ export default function App() {
         </div>
       )}
 
-      {/* Il secondo tocco non puo' dipendere da un messaggio che sparisce:
-          finche' il consenso manca, la richiesta resta scritta sullo schermo. */}
-      {voiceConsent === 'pending' && !demo && (
-        <div className="consent-bar" role="alert">
-          <strong>SERVE UN SECONDO TOCCO.</strong> Questo browser non elabora la voce sul
-          dispositivo: l'audio verrebbe inviato a un servizio esterno del browser. Tocca di nuovo
-          VOCE per accettare.
+      {/* PRIMO AVVIO DELLA VOCE.
+          Il modello vocale pesa 47 MB e si scarica una volta sola. Senza questo
+          avviso il pulsante VOCE sembrerebbe non rispondere per un minuto.
+          Tutto il resto - sensori, mappa, rilevamento, pulsante SEGNALA -
+          funziona gia': la voce e' l'unica cosa che sta arrivando. */}
+      {!demo && voiceModel.phase === 'scaricamento' && (
+        <div className="consent-bar" role="status">
+          <strong>PREPARAZIONE VOCE {voiceModel.percent}%.</strong> Riconoscimento vocale scaricato
+          una volta sola e conservato nel telefono. Nel frattempo puoi usare ROAD SENSE
+          normalmente.
+        </div>
+      )}
+      {!demo && voiceModel.phase === 'preparazione' && (
+        <div className="consent-bar" role="status">
+          <strong>VOCE QUASI PRONTA.</strong> Ultimi secondi.
+        </div>
+      )}
+      {!demo && voiceModel.phase === 'errore' && (
+        <div className="mic-bar" role="alert">
+          <strong>VOCE NON DISPONIBILE.</strong> Il riconoscimento vocale non si e' caricato. Il
+          resto di ROAD SENSE funziona: usa il pulsante SEGNALA.
         </div>
       )}
 
