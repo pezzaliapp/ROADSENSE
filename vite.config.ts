@@ -46,6 +46,25 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: false,
     rollupOptions: {
+      // Due pagine indipendenti.
+      //
+      // `voice-lab.html` e' il prototipo diagnostico della Fase 0: microfono
+      // continuo, buffer, cancello di parola, decoder locale. NON e' ROAD
+      // SENSE e non importa nulla dell'applicazione, quindi non entra nel suo
+      // bundle - c'e' un test che lo verifica in entrambe le direzioni.
+      //
+      // E' una pagina a se' e non un percorso dentro l'app di proposito: cosi'
+      // il prototipo puo' essere pubblicato, misurato e poi rimosso senza
+      // lasciare un solo bivio nel codice che gira durante la guida.
+      // `resolve` senza `__dirname`: la configurazione e' un modulo ES e Vite
+      // gira dalla radice del progetto, come gia' fa il plugin del sw sopra.
+      // La chiave `index` mantiene ai file dell'applicazione il nome che
+      // avevano prima (`index-<hash>.js`): il prototipo non deve cambiare
+      // l'aspetto della build di ROAD SENSE piu' di quanto sia inevitabile.
+      input: {
+        index: resolve('index.html'),
+        voiceLab: resolve('voice-lab.html'),
+      },
       output: {
         manualChunks: {
           maplibre: ['maplibre-gl'],

@@ -96,15 +96,38 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(cacheFirst(request, SHELL_CACHE));
 });
 
-/** Rete per prima, cache come rete di sicurezza: l'HTML deve restare fresco. */
+/**
+ * Rete per prima, cache come rete di sicurezza: l'HTML deve restare fresco.
+ *
+ * SOLO LA SHELL DELL'APPLICAZIONE VIENE CONSERVATA COME `/index.html`.
+ *
+ * Il controllo sul percorso non e' una precauzione teorica. Questa funzione
+ * intercetta OGNI navigazione della nostra origine e ne salvava il contenuto
+ * sotto `/index.html`, cioe' sotto la chiave da cui ROAD SENSE riparte quando
+ * la rete manca. Con una sola pagina esisteva un solo esito possibile e il
+ * difetto non poteva manifestarsi; appena l'origine serve una seconda pagina -
+ * la diagnostica `/voice-lab.html` - visitarla sostituirebbe la shell offline,
+ * e al primo avvio senza rete ROAD SENSE aprirebbe la pagina di prova al posto
+ * dell'applicazione.
+ *
+ * Le altre pagine non vengono conservate affatto: una diagnostica non ha alcun
+ * motivo di funzionare offline, e inventarle un fallback sarebbe peggio che
+ * dichiararla non disponibile.
+ */
 async function navigationStrategy(request) {
+  const path = new URL(request.url).pathname;
+  const isShell = path === '/' || path === '/index.html';
   try {
     const response = await fetch(request);
-    const cache = await caches.open(SHELL_CACHE);
-    cache.put('/index.html', response.clone());
+    if (isShell) {
+      const cache = await caches.open(SHELL_CACHE);
+      cache.put('/index.html', response.clone());
+    }
     return response;
   } catch {
-    const cached = (await caches.match('/index.html')) || (await caches.match('/'));
+    const cached = isShell
+      ? (await caches.match('/index.html')) || (await caches.match('/'))
+      : null;
     return (
       cached ||
       new Response('<h1>ROAD SENSE non disponibile offline</h1>', {

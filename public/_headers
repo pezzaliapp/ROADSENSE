@@ -1,9 +1,36 @@
 # ROAD SENSE - header di sicurezza per Cloudflare Pages.
 # Questo file viene letto automaticamente da Pages; in locale non ha effetto
 # (per lo sviluppo vale il meta CSP presente in index.html).
+#
+# DUE AGGIUNTE SERVONO AL SOLO LABORATORIO /voice-lab.html
+#
+#   'wasm-unsafe-eval'   senza di esso, una pagina che dichiara `script-src`
+#                        NON puo' compilare WebAssembly: il decoder locale non
+#                        partirebbe affatto. Consente WebAssembly.compile e
+#                        instantiate; NON consente eval() ne' new Function().
+#                        E' molto piu' ristretto di 'unsafe-eval'.
+#   connect-src blob:    per leggere il modello scelto dall'utente dal proprio
+#                        dispositivo. Un URL blob: e' un oggetto creato dalla
+#                        stessa origine: non e' una destinazione di rete, e
+#                        nessun dato puo' uscire dal telefono attraverso di esso.
+#
+# PERCHE' GLOBALI E NON SOLO SU /voice-lab.html
+# Nel formato `_headers` le regole che combaciano si sommano e, a parita' di
+# nome, "i valori vengono uniti da una virgola". Un header CSP con valori
+# separati da virgola vale come POLITICHE MULTIPLE, tutte applicate: il
+# risultato e' l'intersezione, cioe' la piu' restrittiva. Una regola per
+# percorso non puo' quindi ALLARGARE nulla. Restringere si puo', allargare no.
+#
+# EFFETTO REALE SULL'APPLICAZIONE: NESSUNO.
+# `index.html` porta un proprio meta CSP che non contiene ne' 'wasm-unsafe-eval'
+# ne' blob: in connect-src. Header e meta vengono applicati entrambi, quindi per
+# il documento di ROAD SENSE vale l'intersezione: WebAssembly resta bloccato e
+# blob: resta non raggiungibile, esattamente come prima. L'allargamento vale
+# solo per le pagine che non portano quel meta, oggi il solo laboratorio.
+# C'e' un test che verifica questa contenzione.
 
 /*
-  Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tiles.openfreemap.org; connect-src 'self' https://tiles.openfreemap.org https://nowcast.pezzalihub.app; worker-src 'self' blob:; manifest-src 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tiles.openfreemap.org; connect-src 'self' blob: https://tiles.openfreemap.org https://nowcast.pezzalihub.app; worker-src 'self' blob:; manifest-src 'self'; upgrade-insecure-requests
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY

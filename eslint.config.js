@@ -30,4 +30,23 @@ export default tseslint.config(
     files: ['public/sw.js'],
     languageOptions: { globals: { ...globals.serviceworker } },
   },
+  {
+    // Modulo di AudioWorklet del prototipo Fase 0: gira sul thread audio, dove
+    // esistono `AudioWorkletProcessor` e `registerProcessor` e non esiste
+    // `window`. Non passa dal bundler perche' viene caricato per URL dal
+    // contesto audio.
+    // Il pacchetto `globals` non ha un insieme per l'AudioWorklet: si
+    // dichiarano i soli nomi realmente usati, invece di allargare a `worker`
+    // globali che in quel contesto non esistono.
+    files: ['public/lab/*.js'],
+    languageOptions: {
+      globals: {
+        AudioWorkletProcessor: 'readonly',
+        registerProcessor: 'readonly',
+        sampleRate: 'readonly',
+        currentTime: 'readonly',
+        currentFrame: 'readonly',
+      },
+    },
+  },
 );

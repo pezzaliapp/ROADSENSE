@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>ROAD SENSE - Laboratorio voce (Fase 0)</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <!--
+      PAGINA DIAGNOSTICA ISOLATA. NON E' ROAD SENSE.
+
+      Non importa, non chiama e non osserva nulla dell'applicazione: niente
+      report(), EventStore, DetectionEngine, ConfidenceEngine, AlertEngine,
+      ForwardCorridor, mapRoads, NOWCAST, GPS, sensori, mappa, backend.
+      Serve a misurare una cosa sola: se il riconoscimento locale di quattro
+      parole funziona su un telefono reale senza `SpeechRecognition`.
+    -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0e11;
+        --panel: #151a20;
+        --line: #252c35;
+        --text: #e7edf3;
+        --dim: #8b97a4;
+        --ok: #37d67a;
+        --warn: #f2b23c;
+        --bad: #ef5350;
+        --accent: #4aa3ff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+        padding: 12px;
+        -webkit-text-size-adjust: 100%;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 2px;
+        letter-spacing: 0.04em;
+      }
+      .sub {
+        color: var(--dim);
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+      }
+      .panel h2 {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: var(--dim);
+        margin: 0 0 8px;
+        text-transform: uppercase;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 3px 0;
+        border-bottom: 1px dotted #1f262e;
+      }
+      .row:last-child {
+        border-bottom: 0;
+      }
+      .row span:first-child {
+        color: var(--dim);
+      }
+      .row span:last-child {
+        text-align: right;
+        word-break: break-word;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .warn {
+        color: var(--warn);
+      }
+      .bad {
+        color: var(--bad);
+      }
+      .big {
+        font-size: 26px;
+        line-height: 1.2;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      button {
+        font: inherit;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        padding: 16px 18px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #1d2530;
+        color: var(--text);
+        min-height: 56px;
+        flex: 1;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #04121f;
+      }
+      button:disabled {
+        opacity: 0.4;
+      }
+      .controls {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .meter {
+        height: 12px;
+        background: #0d1116;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        overflow: hidden;
+        position: relative;
+        margin-top: 6px;
+      }
+      .meter i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--ok);
+      }
+      .meter u {
+        position: absolute;
+        top: -2px;
+        bottom: -2px;
+        width: 2px;
+        background: var(--warn);
+      }
+      input[type='text'] {
+        font: inherit;
+        width: 100%;
+        padding: 9px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: #0d1116;
+        color: var(--text);
+        margin-top: 4px;
+      }
+      input[type='file'] {
+        font: inherit;
+        color: var(--dim);
+        margin-top: 6px;
+        width: 100%;
+      }
+      label {
+        display: block;
+        color: var(--dim);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        margin-top: 8px;
+      }
+      #log {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        font-size: 12px;
+        max-height: 240px;
+        overflow-y: auto;
+      }
+      #log li {
+        padding: 2px 0;
+        border-bottom: 1px dotted #1f262e;
+        color: var(--dim);
+      }
+      #log li b {
+        color: var(--text);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      td,
+      th {
+        text-align: left;
+        padding: 2px 4px;
+        border-bottom: 1px dotted #1f262e;
+      }
+      th {
+        color: var(--dim);
+        font-weight: 400;
+      }
+      .note {
+        color: var(--dim);
+        font-size: 12px;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ROAD SENSE &mdash; LABORATORIO VOCE</h1>
+    <p class="sub">
+      Fase 0. Prototipo isolato: microfono continuo &rarr; buffer circolare &rarr; cancello di parola
+      &rarr; decoder locale Vosk. Nessuna API di riconoscimento del sistema operativo, nessuna rete
+      durante il riconoscimento. Non e' collegato a ROAD SENSE.
+    </p>
+
+    <div class="panel">
+      <h2>Modello</h2>
+      <label for="modelFile">File del modello dal dispositivo (consigliato)</label>
+      <input id="modelFile" type="file" accept=".gz,.tgz,.tar,application/gzip,application/x-gzip" />
+      <label for="modelUrl">oppure URL del modello (.tar.gz)</label>
+      <input id="modelUrl" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" />
+      <p class="note" id="modelHint"></p>
+    </div>
+
+    <div class="controls">
+      <button id="start" class="primary" type="button">START TEST</button>
+      <button id="stop" type="button" disabled>STOP TEST</button>
+    </div>
+
+    <div class="panel">
+      <h2>Ultimo risultato</h2>
+      <div class="big" id="lastText">&mdash;</div>
+      <div class="row"><span>CONFIDENCE</span><span id="lastConf">&mdash;</span></div>
+      <div class="row"><span>PARZIALE</span><span id="partial">&mdash;</span></div>
+      <div class="row"><span>LATENZA DECODER</span><span id="latency">&mdash;</span></div>
+      <table id="words" hidden>
+        <thead>
+          <tr>
+            <th>parola</th>
+            <th>conf</th>
+            <th>inizio</th>
+            <th>fine</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>Stato</h2>
+      <div class="row"><span>MICROFONO</span><span id="mic" class="bad">OFF</span></div>
+      <div class="row"><span>AUDIO CONTEXT</span><span id="ctx">&mdash;</span></div>
+      <div class="row"><span>FREQUENZA</span><span id="rate">&mdash;</span></div>
+      <div class="row"><span>MODELLO</span><span id="model" class="dim">ASSENTE</span></div>
+      <div class="row"><span>GATE</span><span id="gate">&mdash;</span></div>
+      <div class="row"><span>LIVELLO</span><span id="level">&mdash;</span></div>
+      <div class="row"><span>SOGLIA / FONDO</span><span id="floor">&mdash;</span></div>
+      <div class="meter"><i id="bar"></i><u id="mark"></u></div>
+    </div>
+
+    <div class="panel">
+      <h2>Misure che decidono l'esperimento</h2>
+      <div class="row"><span>COMANDI RICONOSCIUTI</span><span id="commands" class="big">0</span></div>
+      <div class="row"><span>SCARTATI ([unk] / vuoti)</span><span id="rejected">0</span></div>
+      <div class="row"><span>ENUNCIATI RILEVATI</span><span id="utterances">0</span></div>
+      <div class="row">
+        <span>CHIUSURE FORZATE<br /><small>molte = soglia troppo bassa qui</small></span
+        ><span id="forced">0</span>
+      </div>
+      <div class="row">
+        <span>APERTURE MICROFONO<br /><small>deve restare 1</small></span
+        ><span id="openings" class="ok">0</span>
+      </div>
+      <div class="row">
+        <span>PRIMA SILLABA<br /><small>audio consegnato prima del trigger</small></span
+        ><span id="lead">&mdash;</span>
+      </div>
+      <div class="row"><span>PRE-ROLL MANCANTE</span><span id="missing">&mdash;</span></div>
+      <div class="row"><span>TEMPO MICROFONO ATTIVO</span><span id="uptime">&mdash;</span></div>
+      <div class="row"><span>MEMORIA</span><span id="memory">&mdash;</span></div>
+      <div class="row">
+        <span>RICONOSCIMENTO DI SISTEMA</span><span id="noSr" class="ok">NON USATO</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Diario</h2>
+      <ul id="log"></ul>
+    </div>
+
+    <script type="module" src="/src/lab/voiceLab.ts"></script>
+  </body>
+</html>
