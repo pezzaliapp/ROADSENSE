@@ -213,6 +213,64 @@ export const MERGE_RADIUS_M: Record<EventType, number> = {
 };
 
 // ---------------------------------------------------------------------------
+// FORWARD CORRIDOR (Fase 1 - ROUTE-02)
+// ---------------------------------------------------------------------------
+/**
+ * La strada davanti al veicolo, costruita localmente e senza destinazione.
+ *
+ * DUE SORGENTI, MAI CONFUSE
+ *   road-geometry  la geometria dei tile gia' caricati dalla mappa. E' l'unica
+ *                  che puo' costituire EVIDENZA di pertinenza stradale.
+ *   heading        una proiezione da posizione, direzione e velocita'. E' utile
+ *                  - permette di prevedere un incontro - ma NON dimostra che un
+ *                  evento si trovi sulla stessa strada. Una buca su una
+ *                  parallela a trenta metri ci finirebbe dentro.
+ *
+ * Nessuna richiesta di rete: si usa cio' che la mappa ha gia' scaricato per
+ * disegnare. Da qui il limite dichiarato di `roadMaxLengthM`: oltre il
+ * viewport la geometria semplicemente non c'e'.
+ */
+export const CORRIDOR = {
+  /**
+   * Sotto questa velocita' la direzione GPS non e' attendibile e il corridoio
+   * non viene costruito. Da fermi non si sa dove si stia andando: dirlo e'
+   * piu' utile che indovinarlo.
+   */
+  minSpeedMps: 2,
+  /** Orizzonte temporale del corridoio, s. Lunghezza = velocita' x questo. */
+  secondsAhead: 90,
+  /** Limiti alla lunghezza, m. Non esiste un raggio universale (WARN-01). */
+  minLengthM: 300,
+  maxLengthM: 20_000,
+  /**
+   * Tetto al corridoio costruito sulla geometria.
+   * Non e' una scelta di prodotto: e' il limite fisico di cio' che la mappa
+   * tiene in memoria per il viewport corrente.
+   */
+  roadMaxLengthM: 2000,
+  /** Passo di campionamento del corridoio da heading, m. */
+  stepM: 25,
+  /** Distanza massima dalla strada per potersi considerare sopra, m. */
+  snapRadiusM: 25,
+  /** Distanza entro cui due polilinee sono considerate la stessa strada, m. */
+  joinRadiusM: 20,
+  /** Scostamento angolare massimo perche' una strada sia "il proseguimento". */
+  maxTurnDeg: 60,
+  /**
+   * Due proseguimenti entrambi plausibili entro questo scarto angolare sono
+   * una biforcazione incerta: il corridoio si ferma li' invece di sceglierne
+   * uno. ROUTE-05 - a una biforcazione incerta non si inventa una certezza.
+   */
+  forkAmbiguityDeg: 35,
+  /** Confidenza di un corridoio agganciato alla strada e senza ambiguita'. */
+  reliableConfidence: 0.8,
+  /** Confidenza di un corridoio interrotto da una biforcazione. */
+  forkConfidence: 0.5,
+  /** Confidenza di una proiezione sul solo heading. */
+  headingConfidence: 0.3,
+} as const;
+
+// ---------------------------------------------------------------------------
 // CONFIDENCE ENGINE
 // ---------------------------------------------------------------------------
 export const CONFIDENCE = {

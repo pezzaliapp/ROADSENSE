@@ -387,3 +387,43 @@ describe('stabilita\' del testo mostrato', () => {
     for (let i = 1; i < letti.length; i++) expect(letti[i]!).toBeLessThanOrEqual(letti[i - 1]!);
   });
 });
+
+/**
+ * "SUL PERCORSO" SI DICE SOLO CON EVIDENZA STRADALE.
+ *
+ * Verifiche di struttura sul cablaggio in App: la frase meteo predittiva e'
+ * l'unica che afferma una pertinenza stradale, e dalla Fase 1 in poi puo'
+ * essere prodotta anche fuori dalla demo. Queste asserzioni difendono il
+ * cancello che la governa.
+ */
+describe('pertinenza stradale e voce meteo', () => {
+  const app = readFileSync(resolve(ROOT, 'src', 'App.tsx'), 'utf8');
+  const codice = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  it('l\'annuncio meteo passa da un cancello esplicito', () => {
+    expect(codice).toMatch(/weather\.forecast\.inside \|\| roadEvidenceRef\.current/);
+    expect(codice).toMatch(/if \(puoDireSulPercorso\) \{[\s\S]{0,200}?weatherAlertPhrase\(weather\)/);
+  });
+
+  it('l\'evidenza fuori dalla demo viene dal corridoio, non presunta', () => {
+    expect(codice).toMatch(/roadEvidenceRef\.current = allowsRoadRelevance\(corridor\)/);
+  });
+
+  it('la demo conserva la propria evidenza: il tracciato e\' una strada nota', () => {
+    expect(codice).toMatch(/roadEvidenceRef\.current = true/);
+  });
+
+  it('il banner e la mappa NON vengono soppressi: resta l\'informazione visiva', () => {
+    const blocco = codice.slice(
+      codice.indexOf('weatherAlertRef.current = weather;'),
+      codice.indexOf('puoDireSulPercorso'),
+    );
+    expect(blocco).toMatch(/setWeatherAlert\(weather\)/);
+  });
+
+  it('solo la frase predittiva afferma il percorso; "area attuale" no', () => {
+    const phrases = readFileSync(resolve(ROOT, 'src', 'speech', 'phrases.ts'), 'utf8');
+    expect(phrases).toMatch(/inside\) return `Attenzione\. \$\{meta\.label\} nell'area attuale\.`/);
+    expect(phrases).toMatch(/sul percorso/);
+  });
+});

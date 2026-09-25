@@ -14,11 +14,20 @@
  */
 
 import type { DetectionTelemetry } from '../core/DetectionEngine';
+import type { CorridorDebug } from './corridorDebug';
 
 interface Props {
-  telemetry: DetectionTelemetry;
+  telemetry: DetectionTelemetry | null;
   /** Eventi stradali prodotti da START: e' il numero che era esploso. */
   eventCount: number;
+  /**
+   * Stato del corridoio davanti al veicolo.
+   *
+   * Serve a verificare su un telefono reale se la geometria stradale dei tile
+   * arriva davvero: `querySourceFeatures` non esiste in Node e nessun test
+   * automatico puo' dimostrarlo.
+   */
+  corridor?: CorridorDebug | null;
 }
 
 function Row({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -36,13 +45,54 @@ function num(value: number | null, digits = 2, unit = ''): string {
   return `${value.toFixed(digits)}${unit}`;
 }
 
-export function SensorDebugPanel({ telemetry, eventCount }: Props) {
+export function SensorDebugPanel({ telemetry, eventCount, corridor }: Props) {
   const t = telemetry;
-  const kmh = t.speedMps === null ? null : t.speedMps * 3.6;
+  const kmh = t === null || t.speedMps === null ? null : t.speedMps * 3.6;
 
   return (
     <section className="sensor-debug" role="status" aria-label="Debug sensori">
-      <div className="vd-title">DEBUG SENSORI</div>
+      {corridor && (
+        <>
+          <div className="vd-title">CORRIDOIO</div>
+          {/* La riga che decide: solo `road-geometry` puo' sostenere
+              un'affermazione di pertinenza stradale. */}
+          <Row
+            label="SORGENTE"
+            value={corridor.source}
+            tone={corridor.source === 'road-geometry' ? 'ok' : corridor.source === 'heading' ? 'warn' : 'bad'}
+          />
+          <Row
+            label="STATO"
+            value={corridor.status}
+            tone={corridor.status === 'reliable' ? 'ok' : corridor.status === 'uncertain' ? 'warn' : 'bad'}
+          />
+          <Row
+            label="EVIDENZA STRADA"
+            value={corridor.roadEvidence ? 'SI' : 'no'}
+            tone={corridor.roadEvidence ? 'ok' : 'warn'}
+          />
+          <Row label="CONFIDENZA" value={corridor.confidence.toFixed(2)} />
+          <Row
+            label="STRADE DA MAPPA"
+            value={String(corridor.roadFeatures)}
+            tone={corridor.roadFeatures > 0 ? 'ok' : 'bad'}
+          />
+          <Row label="PUNTI" value={String(corridor.points)} />
+          <Row label="LUNGHEZZA" value={`${corridor.lengthM} m`} />
+          <Row
+            label="MOTIVO"
+            value={corridor.reason ?? '--'}
+            tone={corridor.reason ? 'warn' : ''}
+          />
+          {t && <div className="vd-title vd-sub">SENSORI</div>}
+        </>
+      )}
+
+      {t === null ? (
+        <div className="vd-note">Nessun campione dai sensori.</div>
+      ) : (
+        <>
+      {!corridor && <div className="vd-title">DEBUG SENSORI</div>}
 
       <Row label="VELOCITA" value={num(kmh, 0, ' km/h')} />
       <Row label="ACC. VERTICALE" value={num(t.verticalAccel, 2, ' m/s²')} />
@@ -74,6 +124,8 @@ export function SensorDebugPanel({ telemetry, eventCount }: Props) {
         tone={t.eventEmitted ? 'ok' : ''}
       />
       <Row label="EVENTI TOTALI" value={String(eventCount)} tone={eventCount > 30 ? 'bad' : ''} />
+        </>
+      )}
 
       <div className="vd-note">Solo su questo dispositivo. Nessun dato inviato.</div>
     </section>

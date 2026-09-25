@@ -2,9 +2,13 @@
 
 **Documento:** BETA-TRACEABILITY-R1
 **Specifica di riferimento:** `ROAD-SENSE-BETA-MASTER-R1.md` (BASELINE CONGELATA)
-**Repository HEAD analizzato:** `5f8ecbb8ba7f74d95a20f55ed25bb0f7c0815ca3`
-**Data:** 25/09/2026
-**Stato del codice durante l'analisi:** nessuna modifica, nessun commit, nessun push, nessun deploy.
+**Baseline:** `e1e3239` (audit originale su `5f8ecbb8`)
+**Ultimo aggiornamento:** Fase 1 — Forward Corridor (ROUTE-02), 25/09/2026
+**Stato:** modifiche locali non committate; nessun push, nessun deploy.
+
+> **Aggiornamento Fase 1.** Gli ID rivisti sono elencati nella sezione
+> *Changelog Fase 1* in fondo. Tutti gli altri restano invariati rispetto
+> all'audit iniziale.
 
 Questo documento è la Traceability Matrix richiesta da **TRACE-01** e **TRACE-02**. Copre
 tutti e 300 gli ID della Master R1. Nessun requisito è stato reinterpretato, ridotto o
@@ -240,20 +244,20 @@ Legenda colonne: **EVIDENZA** = file/funzione · **TEST** = test esistente o `NO
 | ROAD-06 | PARTIAL | Il cooldown e il cono limitano la ripetizione | `AlertEngine.test.ts` | nessuno stato PASSED esplicito | ALERT-04/05 | M |
 | ROAD-07 | PARTIAL | `cluster.heading !== null` → `maxHeadingMatchDeg` | `AlertEngine.test.ts` | inefficace quando `heading` è null | DEDUP-03 | M |
 | ROAD-08 | **MISSING** | Nessuno stato di relevance modellato | NONE | serve enum esplicito | ROAD-10 | M |
-| ROAD-09 | **MISSING** | Nessun concetto di UNKNOWN | NONE | oggi l'ignoto è implicitamente «allerta» | ROAD-08 | H |
-| ROAD-10 | **MISSING** | Nessun map matching, quindi nessuna confidence associata | NONE | — | ROUTE-02 | H |
+| ROAD-09 | PARTIAL ⬆ | `allowsRoadRelevance()` è il punto unico della decisione: `heading` e `none` non diventano mai pertinenza, e il cancello è applicato alla voce meteo | `forwardCorridor.test.ts` «affermare la pertinenza stradale» (6 casi), `weather.test.ts` | il principio è applicato al **meteo**; `AlertEngine` (pericoli stradali) non lo consuma ancora | ROAD-08 | M |
+| ROAD-10 | PARTIAL ⬆ | L'aggancio dichiara `source`, `status`, `confidence`, `roadEvidence`; nessuna precisione simulata quando i dati mancano | `forwardCorridor.test.ts` «H», «D» | non è map matching probabilistico: è un aggancio a raggio con verifica angolare | ROUTE-02 | H |
 
 ### O — FORWARD CORRIDOR / ROUTE
 
 | ID | STATO | EVIDENZA | TEST | GAP | DIP | REG |
 |---|---|---|---|---|---|---|
 | ROUTE-01 | PASS | Nessuna destinazione richiesta in nessun punto | `demoPipeline.test.ts` | nessuno | — | L |
-| ROUTE-02 | **MISSING** | `App.tsx:573` → `demoRef.current ? routeAheadFrom(...) : null` (BASE-11) | `intersection.test.ts` (solo demo) | **gap cardine dell'intera Beta** | ROAD-*, NOW-ROAD-04 | H |
-| ROUTE-03 | **MISSING** | Nessun concetto di route fuori dalla demo | NONE | — | ROUTE-02 | H |
-| ROUTE-04 | **MISSING** | `forecastIntersection` riceve `null` fuori demo | `intersection.test.ts` | valutazione su cerchio GPS | ROUTE-02 | H |
-| ROUTE-05 | **MISSING** | Nessuna gestione di biforcazioni | NONE | — | ROUTE-02 | M |
-| ROUTE-06 | PARTIAL | `lookaheadMeters()` dipende dalla velocità, limiti centralizzati | `AlertEngine.test.ts` | non è la lunghezza di un corridoio | ROUTE-02 | M |
-| ROUTE-07 | PARTIAL | Distanza lungo strada calcolata **solo** in demo | `intersection.test.ts` | fuori demo è geodetica | ROUTE-02 | M |
+| ROUTE-02 | PARTIAL ⬆ | `core/forwardCorridor.ts buildForwardCorridor()`; `App.tsx` costruisce il corridoio fuori demo | `forwardCorridor.test.ts` (25 casi) | il corridoio esiste sempre, ma la componente **road-geometry** dipende dai tile caricati e **non è mai stata verificata su dispositivo**: `querySourceFeatures` non è testabile in Node | DEVICE-06/08 | H |
+| ROUTE-03 | **MISSING** | Nessuna sorgente di route reale (destinazione) esiste | NONE | invariato: la Fase 1 costruisce un corridoio, non una route | ROUTE-02 | H |
+| ROUTE-04 | PARTIAL ⬆ | Il motore meteo riceve il corridoio anche fuori demo (`App.tsx`, ramo non-demo) | `forwardCorridor.test.ts`, `intersection.test.ts` | vale **solo per il meteo**: `AlertEngine` (pericoli stradali) usa ancora cerchio + cono, non toccato in questa fase | ALERT-02 | H |
+| ROUTE-05 | **PASS** ⬆ | Due proseguimenti entro `CORRIDOR.forkAmbiguityDeg` → il corridoio si ferma al nodo e passa a `status: 'uncertain'` | `forwardCorridor.test.ts` «C. biforcazione» (2 casi) | nessuno | — | M |
+| ROUTE-06 | **PASS** ⬆ | `CORRIDOR.secondsAhead` × velocità, limitata fra `minLengthM` e `maxLengthM`; policy centralizzata in `config.ts` | `forwardCorridor.test.ts` «lunghezza coerente» (3 casi) | nessuno | — | M |
+| ROUTE-07 | PARTIAL ⬆ | `corridorRoute()` espone `pointAt(aheadM)`: distanza lungo il corridoio anche fuori demo | `forwardCorridor.test.ts` «adattamento al contratto RouteAhead» | è distanza lungo **strada** solo con `source: 'road-geometry'`; con `heading` è lungo una proiezione | ROUTE-02 | M |
 | ROUTE-08 | PASS | Tutto il calcolo è locale, nessuna API esterna | `intersection.test.ts` | nessuno | — | L |
 
 ### P — WARNING DISTANCE / ETA
@@ -347,9 +351,9 @@ Legenda colonne: **EVIDENZA** = file/funzione · **TEST** = test esistente o `NO
 | NOW-ROAD-01 | PASS | `cellCentreAt`/`cellRadiusAt` interpolano sul `cone` | `intersection.test.ts` «traiettoria dal cono» | nessuno | — | H |
 | NOW-ROAD-02 | PASS | Nessuna ricostruzione: il test verifica che la deriva **non** venga usata quando c'è il cono | `intersection.test.ts` | nessuno | — | H |
 | NOW-ROAD-03 | PASS | `announce: true` sempre; ROAD SENSE non rivaluta la decisione meteo | `nowcast.test.ts` | nessuno | — | M |
-| NOW-ROAD-04 | **MISSING** | `forecastIntersection(cell, driver, null)` fuori demo (BASE-16) | `intersection.test.ts` (solo demo) | manca il corridoio | ROUTE-02 | H |
+| NOW-ROAD-04 | PARTIAL ⬆ | Il cono NOWCAST viene ora intersecato con il corridoio anche fuori demo | `forwardCorridor.test.ts`, `intersection.test.ts` | l'intersezione avviene, ma contro un corridoio che può essere `heading` (nessuna evidenza stradale) e limitato al viewport | ROUTE-02 | H |
 | NOW-ROAD-05 | PARTIAL | Senza route restituisce `NO_INTERSECTION` | `intersection.test.ts` | «non pertinente» per assenza di dati, non per valutazione | ROUTE-02 | M |
-| NOW-ROAD-06 | **MISSING** | Resta attivo solo il controllo «già dentro la cella» | `intersection.test.ts` | un fenomeno vicino ma non sul percorso non è distinguibile | ROUTE-02 | H |
+| NOW-ROAD-06 | PARTIAL ⬆ | Un fenomeno fuori dal corridoio non produce intersezione; con corridoio `heading` non viene comunque annunciato a voce | `intersection.test.ts`, `forwardCorridor.test.ts` | con `heading` il fenomeno resta visibile su mappa/banner: la distinzione «vicino ma non sul percorso» non è ancora dimostrabile senza geometria | ROUTE-02 | M |
 
 ### W — NOWCAST FLOW
 
@@ -358,7 +362,7 @@ Legenda colonne: **EVIDENZA** = file/funzione · **TEST** = test esistente o `NO
 | NOW-FLOW-01 | PARTIAL | Endpoint→provider→validation→freshness→dati_fermi→mapping→cone: **PASS**; intersection→ETA→priority→queue: **MISSING** | `nowcast.test.ts` | tre stadi mancanti | ROUTE-02, VOICE-OUT-07 | H |
 | NOW-FLOW-02 | PASS | `weatherAlertPhrase()` cablata su `announce()` | `speech.test.ts` | nessuno | — | M |
 | NOW-FLOW-03 | PARTIAL | Può generare voce solo per «nell'area attuale» | `speech.test.ts` | «sul percorso» irraggiungibile | ROUTE-02 | H |
-| NOW-FLOW-04 | **MISSING** | ETA prodotto solo da `forecastIntersection` con route | `speech.test.ts` | frase con tempo non producibile fuori demo | ROUTE-02 | H |
+| NOW-FLOW-04 | PARTIAL ⬆ | Con il corridoio l'ETA è calcolabile fuori demo; la frase «sul percorso» è pronunciata **solo** con `roadEvidence` (`App.tsx`, `puoDireSulPercorso`) | `forwardCorridor.test.ts` «affermare la pertinenza stradale», `weather.test.ts` «pertinenza stradale e voce meteo» | resta PARTIAL: con corridoio `heading` non si annuncia, quindi il requisito è soddisfatto solo dove la mappa fornisce geometria | NOW-FLOW-07, ALERT-09 | M |
 | NOW-FLOW-05 | PASS | `displayEtaSec === null → nessun tempo nella frase` | `speech.test.ts` | nessuno | — | L |
 | NOW-FLOW-06 | PARTIAL | `weatherAlertPhrase` produce «Possibile downburst sul percorso» | `speech.test.ts` | ma solo se l'intersezione esiste | ROUTE-02 | M |
 | NOW-FLOW-07 | PASS | Nessun ETA inventato | `intersection.test.ts` | nessuno | — | L |
@@ -726,3 +730,81 @@ Riportata nella risposta operativa. L'unico file creato da questo ciclo è
 ---
 
 *Fine BETA-TRACEABILITY-R1 — riferimento: `ROAD-SENSE-BETA-MASTER-R1.md`*
+
+---
+
+## Changelog Fase 1 — Forward Corridor (ROUTE-02)
+
+**Implementato:** `src/core/forwardCorridor.ts` (modulo puro), `src/ui/mapRoads.ts`
+(lettura della geometria dai tile già caricati), integrazione in `src/App.tsx` al posto
+del `null` fuori demo, `CORRIDOR` in `src/config/config.ts`.
+
+**Test aggiunti:** `src/core/forwardCorridor.test.ts` — 25 casi, scritti prima del codice.
+
+### ID il cui stato è realmente cambiato
+
+| ID | Prima | Dopo | Perché |
+|---|---|---|---|
+| ROUTE-02 | MISSING | **PARTIAL** | il corridoio esiste fuori demo; la parte road-geometry non è verificata su dispositivo |
+| ROUTE-04 | MISSING | **PARTIAL** | il meteo valuta contro il corridoio; i pericoli stradali no |
+| ROUTE-05 | MISSING | **PASS** | biforcazione ambigua → il corridoio si ferma e lo dichiara |
+| ROUTE-06 | PARTIAL | **PASS** | lunghezza velocità-dipendente con policy centralizzata |
+| ROUTE-07 | PARTIAL | **PARTIAL** ⬆ | distanza lungo corridoio anche fuori demo |
+| ROAD-09 | MISSING | **PARTIAL** | UNKNOWN non diventa mai pertinenza |
+| ROAD-10 | MISSING | **PARTIAL** | aggancio con confidence e sorgente dichiarate |
+| NOW-ROAD-04 | MISSING | **PARTIAL** | cono ∩ corridoio ora avviene fuori demo |
+| NOW-ROAD-06 | MISSING | **PARTIAL** | fuori dal corridoio nessuna intersezione |
+| NOW-FLOW-04 | MISSING | **PARTIAL** | ETA calcolabile fuori demo |
+
+### ID che NON sono cambiati, benché ROUTE-02 sia implementato
+
+Nessuno di questi è stato promosso: l'evidenza non lo consente.
+
+| ID | Stato | Perché resta così |
+|---|---|---|
+| ROUTE-03 | MISSING | un corridoio non è una route: nessuna destinazione esiste |
+| ROAD-01/02/03/04/06/07 | invariati | `AlertEngine` non è stato toccato: i pericoli stradali usano ancora cerchio + cono |
+| ROAD-08 | MISSING | esistono stati del *corridoio*, non stati di *pertinenza* (`AHEAD_RELEVANT`, `OTHER_ROAD`, …) |
+| NOW-ROAD-05 | PARTIAL | invariato nella sostanza |
+| NOW-FLOW-01/03/06 | PARTIAL | mancano ancora priority e queue |
+| WARN-02/05/06 | invariati | la warning distance non è stata toccata |
+| BETA-06/21/22 | MISSING | richiedono road relevance nel motore di alert, non solo il corridoio |
+
+### Limiti reali incontrati
+
+1. **La geometria stradale vive solo nella cache tile di MapLibre.** Oltre il viewport non
+   esiste: `CORRIDOR.roadMaxLengthM` (2 km) è un limite fisico, non una scelta di prodotto.
+   Nessun tile aggiuntivo viene richiesto a OpenFreeMap, come da vincolo.
+2. **Il percorso road-geometry non è testabile in automatico.** `querySourceFeatures` non
+   esiste in Node. `mapRoads.ts` è scritto in modo difensivo (qualunque errore → `[]` →
+   ripiego su heading), ma la sua correttezza **richiede un test su dispositivo**.
+3. **Rischio introdotto, da presidiare.** Prima della Fase 1, fuori dalla demo il meteo non
+   poteva dire «sul percorso»: mancava il percorso. Ora può. Con un corridoio `heading`
+   quella frase afferma una pertinenza stradale che non è stata dimostrata. Il dato per
+   evitarlo esiste già (`roadEvidence`), ma **nessuno lo consuma**: va collegato alla
+   formulazione dell'avviso in Fase 2/3.
+
+### Correzione di sicurezza (fine Fase 1)
+
+La Fase 1 aveva introdotto una regressione: con un corridoio costruito sul solo
+`heading`, il meteo poteva pronunciare «sul percorso» senza alcuna evidenza stradale.
+Prima della Fase 1 non poteva farlo, perché il percorso non esisteva.
+
+**Correzione:** `allowsRoadRelevance(corridor)` in `core/forwardCorridor.ts` è il punto
+unico in cui si decide se la pertinenza stradale possa essere affermata. In `App.tsx`
+l'annuncio meteo predittivo passa da `puoDireSulPercorso`; il banner e la mappa restano,
+perché mostrano una previsione senza dichiararla certa. «Nell'area attuale» non dipende
+dal percorso e non è toccata. In demo l'evidenza resta vera: il tracciato è una strada nota.
+
+| Caso | Corridoio | «sul percorso» | Mappa/banner |
+|---|---|---|---|
+| A | `road-geometry`, `roadEvidence: true` | **consentito** | sì |
+| B | `heading`, `roadEvidence: false` | **vietato** | sì |
+| C | `none` | **vietato** (nessun percorso, nessuna intersezione) | no |
+| — | demo | consentito | sì |
+
+Nessun ID è stato promosso a PASS da questa correzione: rende più solida l'evidenza di
+ROAD-09, NOW-ROAD-06 e NOW-FLOW-04, che restano PARTIAL. **ROUTE-02 resta PARTIAL** finché
+il ramo `road-geometry` non è verificato su dispositivo reale.
+
+*Aggiornato al termine della Fase 1 — riferimento: `ROAD-SENSE-BETA-MASTER-R1.md`*

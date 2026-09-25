@@ -11,7 +11,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ALERT, API, APP, MAP, MERGE_RADIUS_M, PRIVACY, SENSORS, VOICE, WEATHER } from './config/config';
+import {
+  ALERT,
+  API,
+  APP,
+  CORRIDOR,
+  MAP,
+  MERGE_RADIUS_M,
+  PRIVACY,
+  SENSORS,
+  VOICE,
+  WEATHER,
+} from './config/config';
 import { AlertEngine, type ActiveAlert } from './core/AlertEngine';
 import { buildClusters } from './core/ConfidenceEngine';
 import { DetectionEngine } from './core/DetectionEngine';
@@ -50,6 +61,13 @@ import { SilentSpeechProvider } from './speech/SpeechProvider';
 import { roadAlertPhrase, weatherAlertPhrase } from './speech/phrases';
 import { DEMO_VOICE_SCRIPT } from './demo/demoVoiceScript';
 import { routeAheadFrom } from './demo/routeAhead';
+import {
+  allowsRoadRelevance,
+  buildForwardCorridor,
+  corridorRoute,
+  type ForwardCorridor,
+} from './core/forwardCorridor';
+import type { RoadQuery } from './ui/mapRoads';
 import type { DemoVehicleState } from './demo/DemoVehicle';
 import type {
   EventCluster,
@@ -78,6 +96,7 @@ import { useReducedMotion } from './ui/useReducedMotion';
 import { useWakeLock } from './ui/useWakeLock';
 import { VoiceDebugPanel } from './ui/VoiceDebugPanel';
 import { SensorDebugPanel } from './ui/SensorDebugPanel';
+import { corridorDebug, type CorridorDebug } from './ui/corridorDebug';
 
 function isDemoRequested(): boolean {
   if (typeof window === 'undefined') return false;
@@ -156,11 +175,24 @@ export default function App() {
   const [voiceDebug] = useState(isVoiceDebugRequested);
   const [sensorDebug] = useState(isSensorDebugRequested);
   /**
+   * Lo stesso valore, leggibile dentro le callback dei sensori senza
+   * rientrare nelle dipendenze degli effetti.
+   */
+  const sensorDebugRef = useRef(sensorDebug);
+  sensorDebugRef.current = sensorDebug;
+  /**
    * Fotografia dei sensori, aggiornata a bassa frequenza.
    * I campioni arrivano a 50 Hz: ridisegnare a quel ritmo sarebbe uno spreco
    * e renderebbe i numeri illeggibili.
    */
   const [telemetry, setTelemetry] = useState<DetectionTelemetry | null>(null);
+  /**
+   * Stato del corridoio, solo con ?sensorDebug=1.
+   *
+   * Non e' un log: e' l'ultimo valore, sovrascritto a ogni posizione. Nessuna
+   * coordinata, nessuna cronologia, niente che sopravviva alla pagina.
+   */
+  const [corridorInfo, setCorridorInfo] = useState<CorridorDebug | null>(null);
   const telemetryAtRef = useRef(0);
   const autoEventsRef = useRef(0);
   const [autoEvents, setAutoEvents] = useState(0);
@@ -260,6 +292,23 @@ export default function App() {
   const weatherCellsRef = useRef<readonly WeatherCell[]>([]);
   /** Ultima distanza nota lungo il tracciato demo: restringe la ricerca. */
   const routeHintRef = useRef<number | undefined>(undefined);
+  /**
+   * Interrogazione della geometria stradale gia' caricata dalla mappa.
+   * `null` finche' la mappa non e' pronta: in quel caso il corridoio ripiega
+   * sull'heading e lo dichiara.
+   */
+  const roadQueryRef = useRef<RoadQuery | null>(null);
+  /** Ultimo corridoio costruito. Conservato per la diagnosi e per la mappa. */
+  const corridorRef = useRef<ForwardCorridor | null>(null);
+  /**
+   * Il percorso attuale puo' sostenere un'affermazione di pertinenza
+   * stradale.
+   *
+   * Vero in demo, dove il tracciato e' noto ed e' una strada vera. Fuori
+   * dalla demo dipende dal corridoio: la geometria cartografica si', una
+   * proiezione sull'heading no.
+   */
+  const roadEvidenceRef = useRef(false);
   /** Sorgente meteo della demo: possiede l'unico orologio dello scenario. */
   const weatherProviderRef = useRef<DemoWeatherProvider | null>(null);
   /**
@@ -568,12 +617,50 @@ export default function App() {
       const cells = weatherCellsRef.current;
       if (cells.length === 0) return;
 
-      // Il percorso davanti al veicolo esiste SOLO in demo: e' la conoscenza
-      // che rende possibile prevedere l'incontro invece di aspettarlo.
-      const ahead = demoRef.current
-        ? routeAheadFrom({ lat: geo.lat, lon: geo.lon }, routeHintRef.current)
-        : null;
-      if (ahead) routeHintRef.current = ahead.atM;
+      // Il percorso davanti al veicolo.
+      //
+      // In demo resta il tracciato noto, che e' esatto e non va peggiorato.
+      // Fuori dalla demo, dove fino alla Fase 1 non c'era nulla, si costruisce
+      // un corridoio locale: dalla geometria stradale se la mappa ne ha, da
+      // posizione e direzione altrimenti. Il corridoio dichiara sempre quale
+      // delle due sia, e una proiezione NON vale come prova che un evento si
+      // trovi sulla stessa strada.
+      let ahead: { route: { pointAt: (m: number) => { lat: number; lon: number } | null } } | null =
+        null;
+      if (demoRef.current) {
+        const demoAhead = routeAheadFrom({ lat: geo.lat, lon: geo.lon }, routeHintRef.current);
+        routeHintRef.current = demoAhead.atM;
+        ahead = { route: demoAhead.route };
+        corridorRef.current = null;
+        // Il tracciato della demo e' una strada nota: puo' sostenere la
+        // pertinenza esattamente come la geometria cartografica.
+        roadEvidenceRef.current = true;
+      } else {
+        const roads =
+          roadQueryRef.current?.({ lat: geo.lat, lon: geo.lon }, CORRIDOR.roadMaxLengthM) ?? [];
+        const corridor = buildForwardCorridor({
+          position: { lat: geo.lat, lon: geo.lon },
+          heading: geo.heading,
+          speedMps: geo.speedMps,
+          roads,
+        });
+        corridorRef.current = corridor;
+        roadEvidenceRef.current = allowsRoadRelevance(corridor);
+        const route = corridorRoute(corridor);
+        ahead = route ? { route } : null;
+
+        // Osservazione, dopo la decisione: non puo' influenzarla. Fuori dal
+        // debug non viene nemmeno calcolata.
+        if (sensorDebugRef.current) {
+          setCorridorInfo(
+            corridorDebug(corridor, {
+              heading: geo.heading,
+              speedMps: geo.speedMps,
+              roadFeatures: roads.length,
+            }),
+          );
+        }
+      }
 
       // Livellamento esponenziale della velocita': il tempo previsto deve
       // seguire il ritmo di marcia, non l'accelerata del momento.
@@ -625,11 +712,22 @@ export default function App() {
       if (weather) {
         weatherAlertRef.current = weather;
         setWeatherAlert(weather);
-        speechRef.current.announce(
-          `weather:${weather.cell.id}`,
-          weatherAlertPhrase(weather),
-          geo.ts,
-        );
+
+        // "sul percorso" afferma che il fenomeno incrocia la strada percorsa.
+        // Con un corridoio costruito sul solo heading quell'affermazione non
+        // e' dimostrata, e non va pronunciata: il fenomeno resta sulla mappa
+        // e nel banner, che mostrano una previsione senza dichiararla certa.
+        //
+        // "nell'area attuale" e' un'altra cosa: dice dove ci si trova adesso,
+        // non dove si andra', e non dipende dal percorso.
+        const puoDireSulPercorso = weather.forecast.inside || roadEvidenceRef.current;
+        if (puoDireSulPercorso) {
+          speechRef.current.announce(
+            `weather:${weather.cell.id}`,
+            weatherAlertPhrase(weather),
+            geo.ts,
+          );
+        }
         if (weatherTimerRef.current) clearTimeout(weatherTimerRef.current);
         weatherTimerRef.current = setTimeout(() => {
           weatherAlertRef.current = null;
@@ -1068,8 +1166,12 @@ export default function App() {
 
       {/* Diagnosi: esistono solo con i rispettivi parametri nell'indirizzo. */}
       {voiceDebug && <VoiceDebugPanel diagnostics={diagnostics} />}
-      {sensorDebug && telemetry && (
-        <SensorDebugPanel telemetry={telemetry} eventCount={autoEvents} />
+      {sensorDebug && (telemetry || corridorInfo) && (
+        <SensorDebugPanel
+          telemetry={telemetry}
+          eventCount={autoEvents}
+          corridor={corridorInfo}
+        />
       )}
 
       <div className="map-wrap">
@@ -1078,6 +1180,9 @@ export default function App() {
           // vista giusta invece di restare dove si trovava.
           key={demo ? 'demo' : 'live'}
           clusters={clusters}
+          onRoadQuery={(query) => {
+            roadQueryRef.current = query;
+          }}
           position={position}
           heading={heading}
           follow={follow && running}

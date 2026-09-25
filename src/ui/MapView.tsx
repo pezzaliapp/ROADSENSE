@@ -54,6 +54,7 @@ setWorkerUrl(maplibreWorkerUrl);
 import { ACTIVE_MAP_PROVIDER, MAP, type MapTileProvider } from '../config/config';
 import { confidenceLevel } from '../core/ConfidenceEngine';
 import { destinationPoint } from '../core/geo';
+import { roadQueryFor, type RoadQuery } from './mapRoads';
 import type { EventCluster } from '../core/types';
 import type { AreaOverlay } from './areaOverlay';
 import { EVENT_META } from './eventMeta';
@@ -73,6 +74,15 @@ export interface PeerVehicle {
 
 interface Props {
   clusters: readonly EventCluster[];
+  /**
+   * Rende disponibile la geometria stradale gia' caricata dalla mappa.
+   *
+   * MapView e' l'unico punto del programma che possiede l'istanza MapLibre, e
+   * quindi l'unico che puo' leggere i tile gia' scaricati per disegnare.
+   * Non interpreta nulla: consegna una funzione di interrogazione e basta.
+   * Viene chiamata con `null` allo smontaggio.
+   */
+  onRoadQuery?: (query: RoadQuery | null) => void;
   position: { lat: number; lon: number } | null;
   heading: number | null;
   follow: boolean;
@@ -136,6 +146,7 @@ function styleFor(provider: MapTileProvider): string | StyleSpecification {
 
 export function MapView({
   clusters,
+  onRoadQuery,
   position,
   heading,
   follow,
@@ -214,8 +225,12 @@ export function MapView({
     map.on('dragstart', () => onMapMovedByUser?.());
 
     mapRef.current = map;
+    // La geometria e' leggibile solo a stile caricato: prima non c'e' nulla
+    // nella cache dei tile.
+    map.on('load', () => onRoadQuery?.(roadQueryFor(map)));
 
     return () => {
+      onRoadQuery?.(null);
       map.remove();
       mapRef.current = null;
       readyRef.current = false;
