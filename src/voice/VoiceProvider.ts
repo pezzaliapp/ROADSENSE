@@ -101,6 +101,19 @@ export interface VoiceDiagnostics {
    */
   events: string;
   /**
+   * ESPERIMENTO VAD. Serve a verificare sul dispositivo una cosa sola: che
+   * durante il silenzio `recognitionStarts` NON cresca, e quindi che Android
+   * non emetta alcun tono.
+   */
+  vad: 'off' | 'armed' | 'triggered' | 'suspended';
+  /** Quante volte il VAD ha rilevato voce. */
+  vadTriggers: number;
+  /** Livello e rumore di fondo misurati. Un'energia, mai un contenuto. */
+  vadLevel: number;
+  vadFloor: number;
+  /** Quante sessioni di riconoscimento sono state aperte. */
+  recognitionStarts: number;
+  /**
    * DIAGNOSI DEL PERMESSO MICROFONO (solo ?debugVoice=1).
    *
    * Due canali separati, perche' possono divergere: la Permissions API

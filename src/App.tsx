@@ -53,6 +53,7 @@ import {
   readMicPermissionRaw,
 } from './voice/micPermission';
 import { parseVoiceReport } from './voice/parser';
+import { VoiceActivityDetector, type VadState } from './voice/voiceActivity';
 import { hazardFamily, HAZARD_META } from './hazard/taxonomy';
 import { admitsAlert, assessCluster, type HazardAssessment } from './hazard/assessment';
 import { AlertSpeechEngine } from './speech/AlertSpeechEngine';
@@ -205,6 +206,11 @@ export default function App() {
     lastError: null,
     lastPhrase: null,
     events: '',
+    vad: 'off',
+    vadTriggers: 0,
+    vadLevel: 0,
+    vadFloor: 0,
+    recognitionStarts: 0,
     permissionsApi: 'non disponibile',
     permissionsValue: '--',
     getUserMedia: 'non tentato',
@@ -266,6 +272,19 @@ export default function App() {
   const weatherEngineRef = useRef<WeatherAlertEngine>(new WeatherAlertEngine());
   const voiceRef = useRef<VoiceProvider | null>(null);
   /**
+   * ESPERIMENTO VAD: il microfono resta aperto come misuratore di energia e
+   * il riconoscitore si apre SOLO quando qualcuno parla. Durante il silenzio
+   * `recognition.start()` non viene mai chiamato, quindi Android non emette
+   * alcun tono.
+   *
+   * Mentre e' armato il microfono e' aperto e Android mostra il proprio
+   * indicatore di registrazione. Nessun audio viene registrato, salvato o
+   * trasmesso: si legge un livello, non un contenuto.
+   */
+  const vadRef = useRef<VoiceActivityDetector | null>(null);
+  /** Quante sessioni di riconoscimento sono state aperte da START. */
+  const recognitionStartsRef = useRef(0);
+  /**
    * Mentre ROAD SENSE parla, il riconoscitore viene RILASCIATO.
    *
    * Due motivi, entrambi osservati nel primo test in auto: la voce sintetica
@@ -275,8 +294,16 @@ export default function App() {
    */
   const handleSpeakingChange = useCallback((speaking: boolean) => {
     const voice = voiceRef.current;
-    if (speaking) voice?.pause?.();
-    else voice?.resume?.();
+    if (speaking) {
+      // Prima il VAD, poi il riconoscitore: se il VAD restasse armato
+      // sentirebbe la voce sintetica e riaprirebbe subito il riconoscitore,
+      // che e' esattamente l'auto-ascolto da evitare.
+      vadRef.current?.suspend();
+      voice?.pause?.();
+    } else {
+      voice?.resume?.();
+      vadRef.current?.resume();
+    }
   }, []);
   const voiceReceiptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechRef = useRef<AlertSpeechEngine>(
@@ -1000,6 +1027,7 @@ export default function App() {
   const startVoice = useCallback(() => {
     // Ascolto gia' attivo - in sessione o in attesa di riarmarsi: un secondo
     // tocco non deve aprire una catena parallela.
+    if (vadRef.current && vadRef.current.state() !== 'off') return;
     if (voiceRef.current?.isArmed?.() || voiceRef.current?.isListening?.()) return;
 
     // In demo la voce e' recitata: nessun microfono, nulla da autorizzare.
@@ -1034,15 +1062,63 @@ export default function App() {
     // `start()` arriva a `recognition.start()` senza cedere il controllo: su
     // Android e' quella chiamata a far comparire la richiesta del microfono,
     // e un'attesa interposta farebbe decadere l'attivazione del tocco.
-    const provider = new BrowserVoiceProvider(remote);
-    voiceRef.current = provider;
-    // La voce parlata deve poter chiudere questa sessione mentre parla.
+    // La voce parlata deve poter sospendere VAD e riconoscitore.
     speechRef.current.setHandlers({ onSpeakingChange: handleSpeakingChange });
-    provider.start({
-      onTranscript: handleTranscript,
-      onStatus: handleVoiceStatus,
-      ...(voiceDebug ? { onDiagnostics: pushDiagnostics } : {}),
-    });
+
+    /**
+     * Apre UNA sessione di riconoscimento. Chiamata SOLO dal VAD, quando ha
+     * misurato voce: e' questo che rende i toni di Android quanti sono i
+     * comandi invece che quanti sono i secondi.
+     *
+     * `rearm: false` disattiva il riarmo a tempo del provider: a decidere
+     * quando riaprire e' il VAD, non un timer.
+     */
+    const apriRiconoscimento = () => {
+      if (voiceRef.current?.isListening?.()) return;
+      const provider = new BrowserVoiceProvider(remote, undefined, { rearm: false });
+      voiceRef.current = provider;
+      recognitionStartsRef.current++;
+      pushDiagnostics({ recognitionStarts: recognitionStartsRef.current });
+      provider.start({
+        onTranscript: handleTranscript,
+        onStatus: (voice) => {
+          handleVoiceStatus(voice);
+          // Sessione conclusa: si torna a misurare il livello. Nessuna
+          // riapertura automatica: servira' nuova voce.
+          if (voice !== 'listening') vadRef.current?.rearm();
+        },
+        ...(voiceDebug ? { onDiagnostics: pushDiagnostics } : {}),
+      });
+    };
+
+    const vad = new VoiceActivityDetector();
+    vadRef.current = vad;
+    recognitionStartsRef.current = 0;
+    pushDiagnostics({ recognitionStarts: 0, vadTriggers: 0 });
+
+    void vad
+      .start({
+        onVoice: apriRiconoscimento,
+        onState: (vadState: VadState) => {
+          pushDiagnostics({ vad: vadState, vadTriggers: vad.triggers() });
+          // Il chip dice cosa sta facendo il sistema, senza fingere ascolto.
+          if (vadState === 'armed') setStatus((st) => ({ ...st, voice: 'ready' }));
+          if (vadState === 'off') setStatus((st) => ({ ...st, voice: 'off' }));
+        },
+        ...(voiceDebug
+          ? {
+              onLevel: (level: number, floor: number) =>
+                pushDiagnostics({ vadLevel: level, vadFloor: floor }),
+            }
+          : {}),
+      })
+      .then((aperto) => {
+        if (aperto) return;
+        // Microfono non disponibile o negato: nessun ripiego silenzioso, si
+        // dichiara e si lascia decidere a chi guida.
+        setStatus((st) => ({ ...st, voice: 'denied' }));
+        showToast('Microfono non disponibile per l\'ascolto vocale.');
+      });
 
     // Da qui in poi si puo' attendere: sono dati per la diagnosi e per la
     // sessione successiva, non condizioni di avvio.
@@ -1063,6 +1139,8 @@ export default function App() {
   // Allo smontaggio nessuna sessione deve restare aperta.
   useEffect(
     () => () => {
+      vadRef.current?.release();
+      vadRef.current = null;
       voiceRef.current?.stop();
       voiceRef.current = null;
     },

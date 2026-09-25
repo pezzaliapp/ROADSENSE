@@ -38,6 +38,11 @@ export function VoiceDebugPanel({ diagnostics }: Props) {
     lastError,
     lastPhrase,
     events,
+    vad,
+    vadTriggers,
+    vadLevel,
+    vadFloor,
+    recognitionStarts,
     permissionsApi,
     permissionsValue,
     getUserMedia,
@@ -98,6 +103,23 @@ export function VoiceDebugPanel({ diagnostics }: Props) {
           aperto. Il permesso del dispositivo non e' il problema.
         </div>
       )}
+
+      {/* ESPERIMENTO: la riga che decide e' RECOGNITION START. In silenzio
+          non deve crescere. Se non cresce, Android non emette toni. */}
+      <div className="vd-title vd-sub">VAD (esperimento)</div>
+      <Row
+        label="STATO"
+        value={vad}
+        tone={vad === 'armed' ? 'ok' : vad === 'triggered' ? 'warn' : ''}
+      />
+      <Row label="LIVELLO" value={vadLevel.toFixed(3)} />
+      <Row label="FONDO" value={vadFloor.toFixed(3)} />
+      <Row label="VOCE RILEVATA" value={String(vadTriggers)} />
+      <Row
+        label="RECOGNITION START"
+        value={String(recognitionStarts)}
+        tone={recognitionStarts > 0 ? 'warn' : 'ok'}
+      />
 
       <div className="vd-note">Solo su questo dispositivo. Nessun dato inviato.</div>
     </section>
