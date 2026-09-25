@@ -94,11 +94,19 @@ let rejected = 0;
 let utteranceEndedAt: number | null = null;
 let lastLatencyMs: number | null = null;
 
-ui.modelUrl.value = '/lab/model/vosk-model-small-it-0.22.tar.gz';
+// Campo URL VUOTO di proposito.
+//
+// Era precompilato con `/lab/model/vosk-model-small-it-0.22.tar.gz`, un file
+// che non e' mai stato pubblicato. Chi premeva START senza scegliere nulla
+// imboccava quindi un 404 - e, per il difetto corretto in `voskRecognizer`,
+// restava a guardare "CARICAMENTO..." per sempre. Un valore predefinito che
+// punta al nulla e' peggio di nessun valore.
+ui.modelUrl.value = '';
 ui.modelHint.textContent =
-  'Modello: vosk-model-small-it-0.22 (Apache-2.0, ~48 MB). Il file non e’ nel repository: ' +
-  'scaricalo una volta sul telefono e scegli il file, oppure indica un URL della stessa origine. ' +
-  'Il download riguarda il modello, non la voce: nessun audio lascia il dispositivo.';
+  'Scegli il file del modello dal dispositivo: e’ il percorso normale. ' +
+  'Serve vosk-model-small-it-0.22 (Apache-2.0, ~48 MB) nel formato .tar.gz. ' +
+  'Il file resta sul telefono: non viene caricato da nessuna parte, e nessun audio lascia il dispositivo. ' +
+  'Il campo URL e’ un’alternativa diagnostica e puo’ restare vuoto.';
 
 log('Pagina pronta. Nessun microfono aperto.');
 log(`Grammatica: ${LAB_GRAMMAR.join(' / ')}`);
@@ -130,9 +138,12 @@ async function startTest(): Promise<void> {
   setText(ui.lastConf, '—');
   ui.words.hidden = true;
 
+  // Il controllo precede l'apertura del microfono: senza modello non si apre
+  // niente e non si avvia alcun caricamento.
   const source = modelSource();
   if (!source) {
-    log('Nessun modello indicato: scegli il file o inserisci un URL.', 'bad');
+    setText(ui.model, 'SELEZIONA MODELLO', 'warn');
+    log('Nessun modello selezionato. Scegli il file .tar.gz dal dispositivo.', 'bad');
     ui.start.disabled = false;
     return;
   }
@@ -203,8 +214,9 @@ async function startTest(): Promise<void> {
     setText(ui.model, 'PRONTO', 'ok');
     log(`Modello pronto in ${(recognizer.loadMs() / 1000).toFixed(1)} s. Parla.`, 'ok');
   } catch (error) {
+    // L'errore REALE, non un'attesa muta: e' il punto della correzione.
     setText(ui.model, 'ERRORE', 'bad');
-    log(`Modello non caricato: ${message(error)}`, 'bad');
+    log(`Modello non caricato: ${recognizer.lastError() ?? message(error)}`, 'bad');
     log(
       'Se il messaggio parla di CSP o di rete: in produzione `connect-src` consente solo la ' +
         'stessa origine. Vedi la relazione: e’ una decisione, non un difetto.',
@@ -342,6 +354,22 @@ function refresh(): void {
     setText(ui.utterances, String(stats.utterances));
     setText(ui.lead, `${stats.leadMs} ms`, stats.leadMs > 150 ? 'ok' : 'warn');
     setText(ui.missing, `${stats.missingLeadMs} ms`, stats.missingLeadMs > 0 ? 'bad' : 'ok');
+  }
+
+  // La riga MODELLO segue la fase REALE del decoder, invece di restare ferma
+  // sull'etichetta scritta a START.
+  switch (recognizer.phase()) {
+    case 'caricamento':
+      setText(ui.model, 'CARICAMENTO…', 'warn');
+      break;
+    case 'pronto':
+      setText(ui.model, 'PRONTO', 'ok');
+      break;
+    case 'errore':
+      setText(ui.model, `ERRORE: ${recognizer.lastError() ?? 'causa sconosciuta'}`, 'bad');
+      break;
+    default:
+      break;
   }
 
   setText(ui.commands, String(commands), commands > 0 ? 'ok' : undefined);

@@ -41,7 +41,7 @@
  * cio' che accade in un abitacolo.
  */
 
-import { createModel, type KaldiRecognizer, type Model } from 'vosk-browser';
+import { Model, type KaldiRecognizer } from 'vosk-browser';
 
 /** Le quattro parole del test, piu' la via d'uscita. */
 export const LAB_GRAMMAR: readonly string[] = ['buca', 'ostacolo', 'acqua', 'incidente', '[unk]'];
@@ -82,15 +82,53 @@ export interface RecognizerHandlers {
   onError: (message: string) => void;
 }
 
+/**
+ * Oggetto minimo che serve a questa classe: il modello di vosk-browser.
+ * Esiste come tipo a se' per poter iniettare un finto e verificare i percorsi
+ * di FALLIMENTO, che sono quelli che ci hanno fatto perdere un test su strada.
+ */
+export interface ModelLike {
+  on: (event: 'load' | 'error', listener: (message: unknown) => void) => void;
+  terminate: () => void;
+  KaldiRecognizer: new (sampleRate: number, grammar?: string) => KaldiRecognizer;
+}
+
+export type ModelFactory = (url: string) => ModelLike;
+
+const defaultModelFactory: ModelFactory = (url) => new Model(url) as unknown as ModelLike;
+
+/**
+ * Oltre questo tempo senza NESSUNA risposta dal worker si dichiara errore.
+ *
+ * Generoso di proposito: il modello pesa una cinquantina di megabyte, e su una
+ * rete mobile lenta un caricamento legittimo puo' durare minuti. Non e' un
+ * limite di prestazione, e' una rete di sicurezza per il caso in cui il worker
+ * non risponda affatto - un download che si pianta a meta' senza fallire.
+ *
+ * NON e' la correzione del difetto: quella e' ascoltare l'evento `error`.
+ * Un timeout da solo avrebbe nascosto un errore gia' disponibile.
+ */
+const LOAD_TIMEOUT_MS = 300_000;
+
 export class LocalRecognizer {
-  private model: Model | null = null;
+  private model: ModelLike | null = null;
   private recognizer: KaldiRecognizer | null = null;
   private phase_: ModelPhase = 'assente';
   private handlers: RecognizerHandlers | null = null;
   private loadMs_ = 0;
+  private lastError_: string | null = null;
+
+  constructor(
+    private readonly createModelFor: ModelFactory = defaultModelFactory,
+    private readonly timeoutMs: number = LOAD_TIMEOUT_MS,
+  ) {}
 
   phase(): ModelPhase {
     return this.phase_;
+  }
+  /** Motivo dell'ultimo fallimento, da mostrare invece di un'attesa muta. */
+  lastError(): string | null {
+    return this.lastError_;
   }
   /** Quanto e' durato il caricamento del modello, ms. Da misurare sul telefono. */
   loadMs(): number {
@@ -98,6 +136,85 @@ export class LocalRecognizer {
   }
   isReady(): boolean {
     return this.phase_ === 'pronto' && this.recognizer !== null;
+  }
+
+  /**
+   * Apre il modello, concludendo su OGNI esito.
+   *
+   * PERCHE' NON SI USA `createModel()` DI vosk-browser
+   *
+   * La sua implementazione e':
+   *
+   *   new Promise((resolve, reject) =>
+   *     model.on("load", (m) => { if (m.result) { resolve(model); } reject(); }))
+   *
+   * si iscrive SOLO all'evento `load`. Ma il worker, quando il caricamento
+   * fallisce, emette `error` e non emette mai `load`:
+   *
+   *   this.load(modelUrl)
+   *     .then((result) => ctx.postMessage({ event: "load", result }))
+   *     .catch((error) => ctx.postMessage({ event: "error", error: error.message }))
+   *
+   * Quella Promise quindi non si risolve E non si rifiuta: resta pendente per
+   * sempre. E' cio' che sul Samsung ha lasciato "CARICAMENTO..." all'infinito
+   * davanti a un banale 404: il worker aveva segnalato l'errore, ma nessuno
+   * era in ascolto su quell'evento.
+   *
+   * Qui ci si iscrive a entrambi gli eventi e si aggiunge un limite di tempo,
+   * cosi' che ogni esito possibile - riuscita, errore dichiarato, rifiuto
+   * silenzioso, nessuna risposta - diventi uno stato visibile.
+   */
+  private openModel(url: string): Promise<ModelLike> {
+    return new Promise<ModelLike>((resolve, reject) => {
+      let model: ModelLike;
+      try {
+        model = this.createModelFor(url);
+      } catch (error) {
+        reject(asError(error));
+        return;
+      }
+
+      let concluso = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const finire = (esito: () => void): void => {
+        if (concluso) return;
+        concluso = true;
+        if (timer !== null) clearTimeout(timer);
+        timer = null;
+        esito();
+      };
+
+      // Un caricamento fallito lasciava vivo il Worker e il suo modello a
+      // meta': si chiude sempre prima di rifiutare.
+      const fallire = (message: string): void =>
+        finire(() => {
+          try {
+            model.terminate();
+          } catch {
+            // Gia' terminato.
+          }
+          reject(new Error(message));
+        });
+
+      model.on('load', (message) => {
+        const risultato = (message as { result?: boolean } | undefined)?.result;
+        if (risultato) finire(() => resolve(model));
+        // `result: false` significa rifiuto esplicito del worker: e' un errore
+        // dichiarato, non un'attesa.
+        else fallire('il worker ha rifiutato il modello (load con result: false)');
+      });
+
+      model.on('error', (message) => {
+        const testo = (message as { error?: string } | undefined)?.error;
+        fallire(testo && testo.length > 0 ? testo : 'errore non specificato dal decoder');
+      });
+
+      timer = setTimeout(
+        () => fallire(`nessuna risposta dal decoder dopo ${Math.round(this.timeoutMs / 1000)} s`),
+        this.timeoutMs,
+      );
+    });
   }
 
   /**
@@ -112,10 +229,11 @@ export class LocalRecognizer {
     if (this.phase_ === 'caricamento') throw new Error('caricamento gia in corso');
     this.handlers = handlers;
     this.phase_ = 'caricamento';
+    this.lastError_ = null;
     const iniziato = Date.now();
 
     try {
-      const model = await createModel(modelUrl);
+      const model = await this.openModel(modelUrl);
       this.model = model;
 
       const recognizer = new model.KaldiRecognizer(sampleRate, JSON.stringify(LAB_GRAMMAR));
@@ -149,9 +267,14 @@ export class LocalRecognizer {
       this.loadMs_ = Date.now() - iniziato;
       this.phase_ = 'pronto';
     } catch (error) {
+      const guasto = asError(error);
       this.phase_ = 'errore';
+      this.lastError_ = guasto.message;
       this.loadMs_ = Date.now() - iniziato;
-      throw error instanceof Error ? error : new Error(String(error));
+      // Il modello non e' utilizzabile: non va lasciato a mezza strada.
+      this.model = null;
+      this.recognizer = null;
+      throw guasto;
     }
   }
 
@@ -189,4 +312,13 @@ export class LocalRecognizer {
     this.handlers = null;
     this.phase_ = 'assente';
   }
+}
+
+/** Normalizza qualunque valore lanciato in un Error con un messaggio leggibile. */
+function asError(error: unknown): Error {
+  if (error instanceof Error) return error;
+  if (typeof error === 'string' && error.length > 0) return new Error(error);
+  // `createModel` rifiutava con `undefined`: un messaggio vuoto e' peggio di
+  // nessun messaggio, perche' sembra un guasto senza causa.
+  return new Error('fallimento senza dettagli dal decoder');
 }
