@@ -273,15 +273,6 @@ export class BrowserVoiceProvider implements VoiceProvider {
   constructor(
     private readonly allowRemote: boolean = false,
     private readonly env: VoiceEnvironment = browserVoiceEnvironment(),
-    /**
-     * Politica di riapertura automatica.
-     *
-     * `rearm: false` la disattiva del tutto: la sessione finisce e basta.
-     * Serve a chi governa l'apertura dall'esterno - l'esperimento VAD apre
-     * il riconoscitore quando sente una voce, e un riarmo a tempo
-     * riporterebbe proprio i toni periodici che si vogliono eliminare.
-     */
-    private readonly options: { rearm?: boolean } = {},
   ) {}
 
   capabilities(): VoiceCapabilities {
@@ -548,8 +539,6 @@ export class BrowserVoiceProvider implements VoiceProvider {
    */
   private rearmDelay(reason: VoiceEndReason): number | null {
     if (!this.armed) return null;
-    // Riapertura governata da fuori: qui non si riapre mai da soli.
-    if (this.options.rearm === false) return null;
 
     switch (reason) {
       case 'command':

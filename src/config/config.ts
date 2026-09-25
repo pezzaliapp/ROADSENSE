@@ -421,45 +421,6 @@ export const VOICE = {
     /** Arretramento dopo errori consecutivi, ms. Esaurito, si apre il circuito. */
     errorBackoffMs: [2000, 5000, 10_000] as readonly number[],
   },
-  /**
-   * VAD - RILEVAZIONE LOCALE DI ATTIVITA' VOCALE (ESPERIMENTO).
-   *
-   * Il tono di attivazione di Android suona a ogni `recognition.start()` e non
-   * e' sopprimibile da una pagina web. Due strade sono gia' state provate sul
-   * campo e fallite: una sessione per comando, e una sessione lunga con
-   * `continuous = true`. In entrambe il tono seguiva il TEMPO.
-   *
-   * Qui si prova a farlo seguire la VOCE: il microfono resta aperto come
-   * semplice misuratore di energia - `getUserMedia` non emette alcun tono - e
-   * il riconoscitore si apre solo quando qualcuno parla davvero.
-   *
-   * Nessun audio viene registrato, salvato o trasmesso: si legge un livello,
-   * non un contenuto.
-   *
-   * ATTENZIONE - SOGLIE PROVVISORIE.
-   * Un abitacolo in marcia e' rumoroso, e una soglia assoluta sarebbe
-   * sbagliata: quella di un'auto ferma non vale a 130 km/h. Si stima il
-   * rumore di fondo e si scatta quando il segnale lo supera di un fattore.
-   * I valori vanno calibrati su strada; il pannello di diagnosi mostra il
-   * livello misurato proprio per questo.
-   */
-  vad: {
-    /** Ogni quanto si legge il livello, ms. */
-    pollMs: 50,
-    /** Quanto deve durare l'attivita' per non essere un colpo di tosse, ms. */
-    sustainMs: 150,
-    /**
-     * Adattamento del rumore di fondo (0..1). Piu' basso = piu' lento.
-     * Deve seguire il cambio di velocita' del veicolo, non le singole frasi.
-     */
-    floorAlpha: 0.02,
-    /** Di quanto il segnale deve superare il fondo per essere voce. */
-    triggerRatio: 2.5,
-    /** Sotto questo livello assoluto non e' voce, qualunque sia il fondo. */
-    minLevel: 0.02,
-    /** Livello iniziale del fondo, prima di aver misurato. */
-    initialFloor: 0.01,
-  },
   session: {
     /**
      * Quanto si resta in ascolto se non succede nulla, ms.
