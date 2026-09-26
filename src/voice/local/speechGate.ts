@@ -229,6 +229,32 @@ export class SpeechGate {
     return null;
   }
 
+  /**
+   * Torna al silenzio SENZA toccare il riferimento assoluto.
+   *
+   * Serve quando ROAD SENSE comincia a parlare: i campioni smettono di
+   * arrivare, e un enunciato rimasto aperto non vedrebbe mai il silenzio che
+   * serve a chiuderlo - resterebbe bloccato in `speech` per sempre.
+   *
+   * La differenza con `reset()` e' tutta in cio' che NON fa: `consumed` resta
+   * dov'e'. Quel contatore e' il sistema di riferimento condiviso con il buffer
+   * circolare, e azzerarne uno solo dei due li disallinea per sempre. E' il
+   * difetto che sul Fold faceva riconoscere il primo comando e nessuno dei
+   * successivi.
+   *
+   * Anche il fondo viene conservato: il cancello non ha sentito la voce
+   * sintetica - quei campioni sono stati scartati prima - quindi la misura del
+   * rumore d'abitacolo e' ancora valida.
+   */
+  silence(): void {
+    this.state_ = 'silence';
+    this.aboveRun = 0;
+    this.aboveStart = this.consumed;
+    this.belowRun = 0;
+    this.lastVoice = this.consumed;
+    this.openedAt = this.consumed;
+  }
+
   reset(): void {
     this.state_ = 'silence';
     this.floor_ = this.config.initialFloor;

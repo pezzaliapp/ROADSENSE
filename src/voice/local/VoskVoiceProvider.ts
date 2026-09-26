@@ -239,6 +239,10 @@ export class VoskVoiceProvider implements VoiceProvider {
   }
 
   private onResult(text: string): void {
+    // Un risultato che arriva mentre ROAD SENSE parla e' la coda dell'enunciato
+    // chiuso da `pause()`, non una richiesta di chi guida: non deve diventare
+    // una segnalazione.
+    if (this.speaking) return;
     const pulito = text.replace(/\[unk\]/g, '').replace(/\s+/g, ' ').trim();
     if (pulito.length === 0) return;
     this.report({ lastPhrase: pulito, phase: 'result' });
@@ -272,15 +276,24 @@ export class VoskVoiceProvider implements VoiceProvider {
    */
   pause(): void {
     this.speaking = true;
-    this.gate?.reset();
+    // Si abbandona l'enunciato in corso e si riporta il cancello al silenzio,
+    // SENZA azzerarne il riferimento: `gate.reset()` lo faceva, e disallineava
+    // il cancello dal buffer circolare in modo permanente. Dopo il primo
+    // annuncio il decoder riceveva audio vecchio di secondi, e nessun comando
+    // successivo veniva piu' riconosciuto. E' il guasto misurato sul Fold.
+    this.capture?.suspend();
+    // Il decoder aveva gia' ricevuto l'inizio di quell'enunciato: lo si chiude
+    // qui, cosi' i campioni della prossima parola non gli si sommano sopra.
+    this.recognizer?.flush();
     this.report({ phase: 'voce ROAD SENSE' });
   }
 
   resume(): void {
     this.speaking = false;
-    // Il cancello ricomincia dalla calibrazione: dopo la voce sintetica il
-    // fondo misurato non e' piu' quello dell'abitacolo.
-    this.gate?.reset();
+    // Niente da azzerare: il cancello non ha mai sentito la voce sintetica,
+    // perche' i campioni sono stati scartati prima di raggiungerlo. Il rumore
+    // di fondo misurato e' ancora quello dell'abitacolo, e il riferimento e'
+    // rimasto allineato al buffer. Si riprende esattamente da dove si era.
     if (this.armed && this.modelPhase === 'pronto') {
       this.report({ phase: 'listening' });
       this.emit('listening');

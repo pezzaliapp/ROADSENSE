@@ -131,6 +131,18 @@ export class UtteranceCapture {
     }
   }
 
+  /**
+   * ROAD SENSE sta per parlare: si abbandona l'enunciato in corso.
+   *
+   * Non si consegna cio' che era stato raccolto - sarebbe mezza parola - e non
+   * si tocca il riferimento assoluto, che deve restare allineato al buffer.
+   */
+  suspend(): void {
+    this.capturing = false;
+    this.sent = 0;
+    this.gate.silence();
+  }
+
   reset(): void {
     this.capturing = false;
     this.nextToSend = 0;
