@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { defineConfig, type Plugin } from 'vitest/config';
@@ -26,7 +27,23 @@ function serviceWorkerVersion(): Plugin {
       if (!source.includes('__APP_VERSION__')) {
         throw new Error('sw.js non contiene il segnaposto __APP_VERSION__');
       }
-      writeFileSync(file, source.replaceAll('__APP_VERSION__', APP_VERSION), 'utf8');
+      if (!source.includes('__BUILD_ID__')) {
+        throw new Error('sw.js non contiene il segnaposto __BUILD_ID__');
+      }
+      // Identificatore della build: cambia quando cambia il bundle. E' cio'
+      // che permette al service worker di cancellare le cache precedenti,
+      // impossibile finche' i nomi derivavano da una versione mai aggiornata.
+      const bundle = readdirSync(resolve('dist', 'assets'))
+        .filter((f) => /^index-.*\.js$/.test(f))
+        .sort()
+        .join('|');
+      if (bundle.length === 0) throw new Error('bundle principale non trovato in dist/assets');
+      const buildId = createHash('sha256').update(bundle).digest('hex').slice(0, 12);
+      writeFileSync(
+        file,
+        source.replaceAll('__APP_VERSION__', APP_VERSION).replaceAll('__BUILD_ID__', buildId),
+        'utf8',
+      );
     },
   };
 }

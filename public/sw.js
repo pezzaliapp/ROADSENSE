@@ -32,8 +32,21 @@
 // un solo punto da aggiornare per una release, nessuna divergenza possibile
 // fra versione dell'app e nome delle cache.
 const VERSION = '__APP_VERSION__';
-const SHELL_CACHE = `roadsense-shell-${VERSION}`;
-const ASSET_CACHE = `roadsense-assets-${VERSION}`;
+/**
+ * Identificatore della BUILD, non della versione dichiarata.
+ *
+ * I nomi delle cache derivavano da `VERSION`, ferma a 0.1.0 da sempre: erano
+ * quindi identici a ogni pubblicazione, e la pulizia in `activate` - che
+ * cancella le cache il cui nome non e' quello corrente - non cancellava mai
+ * niente. Ogni deploy lasciava sul telefono i propri asset, per sempre, e in
+ * questo progetto significa qualche megabyte alla volta.
+ *
+ * Con un identificatore che cambia a ogni build le cache vecchie hanno un nome
+ * diverso e vengono rimosse davvero.
+ */
+const BUILD = '__BUILD_ID__';
+const SHELL_CACHE = `roadsense-shell-${VERSION}-${BUILD}`;
+const ASSET_CACHE = `roadsense-assets-${VERSION}-${BUILD}`;
 
 const SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png'];
 
@@ -87,6 +100,12 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(navigationStrategy(request));
     return;
   }
+
+  // Il modello vocale pesa 47 MB ed e' gia' dichiarato immutabile: la cache
+  // HTTP del browser lo conserva da sola. Metterlo ANCHE qui significava
+  // tenerne due copie sul telefono, e in un dispositivo che sta finendo lo
+  // spazio e' la differenza fra funzionare e no.
+  if (url.pathname.startsWith('/assets/model/')) return;
 
   if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/')) {
     event.respondWith(cacheFirst(request, ASSET_CACHE));

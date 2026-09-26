@@ -107,6 +107,7 @@ interface Harness {
   request: (path: string, mode?: string) => Promise<FakeResponse | null>;
   shell: () => Promise<FakeResponse | undefined>;
   install: () => Promise<void>;
+  activate: () => Promise<void>;
 }
 
 function boot(): Harness {
@@ -180,6 +181,10 @@ function boot(): Harness {
     install: async () => {
       const pending: Promise<unknown>[] = [];
       await fire('install', { __pending: pending, waitUntil: (p: Promise<unknown>) => pending.push(p) });
+    },
+    activate: async () => {
+      const pending: Promise<unknown>[] = [];
+      await fire('activate', { __pending: pending, waitUntil: (p: Promise<unknown>) => pending.push(p) });
     },
   };
 }
@@ -298,5 +303,50 @@ describe('service worker / comportamento dell applicazione invariato', () => {
       cb({ request, respondWith: () => (answered = true), waitUntil: () => undefined });
     }
     expect(answered).toBe(false);
+  });
+});
+
+describe('service worker / le cache vecchie vengono davvero rimosse', () => {
+  /**
+   * I nomi derivavano da `VERSION`, ferma a 0.1.0: identici a ogni deploy,
+   * quindi la pulizia in `activate` non cancellava mai nulla e ogni
+   * pubblicazione lasciava i propri asset sul telefono per sempre. In questo
+   * progetto sono megabyte alla volta, e il modello vocale ne pesa 47.
+   */
+  it('il nome della cache dipende dalla BUILD, non dalla versione dichiarata', () => {
+    const src = readFileSync(SW_PATH, 'utf8');
+    expect(src).toContain("const BUILD = '__BUILD_ID__'");
+    expect(src).toContain('roadsense-shell-${VERSION}-${BUILD}');
+    expect(src).toContain('roadsense-assets-${VERSION}-${BUILD}');
+    // Se i nomi tornassero a dipendere da VERSION, la pulizia smetterebbe di
+    // funzionare senza che nessun test se ne accorga.
+    expect(src).not.toMatch(/roadsense-shell-\$\{VERSION\}`/);
+  });
+
+  it('activate cancella le cache di una build precedente', async () => {
+    const vecchia = await sw.storage.open('roadsense-assets-vecchiabuild');
+    await vecchia.put('/assets/vecchio.js', new FakeResponse('roba vecchia'));
+    expect(sw.storage.caches.has('roadsense-assets-vecchiabuild')).toBe(true);
+
+    await sw.activate();
+    expect(sw.storage.caches.has('roadsense-assets-vecchiabuild')).toBe(false);
+  });
+
+  it('il modello vocale NON viene messo in cache dal service worker', async () => {
+    // 47 MB gia' immutabili nella cache HTTP: una seconda copia su un telefono
+    // a corto di spazio e' la differenza fra funzionare e no.
+    const r = await sw.request('/assets/model/vosk-model-small-it-0.22/part-00');
+    expect(r).toBeNull();
+    for (const cache of sw.storage.caches.values()) {
+      for (const key of cache.entries.keys()) expect(key).not.toContain('/model/');
+    }
+  });
+
+  it('gli altri asset restano in cache', async () => {
+    await sw.request('/assets/index-abc.js');
+    const trovato = [...sw.storage.caches.values()].some((c) =>
+      [...c.entries.keys()].some((k) => k.includes('index-abc.js')),
+    );
+    expect(trovato).toBe(true);
   });
 });
