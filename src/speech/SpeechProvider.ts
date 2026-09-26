@@ -19,6 +19,16 @@ export interface SpeechProvider {
    * una `onDone` mai invocata lascerebbe la voce spenta per sempre.
    */
   speak(text: string, onDone?: () => void): void;
+  /**
+   * Sblocca la sintesi, se il browser lo richiede.
+   *
+   * DEVE essere chiamata dentro un gesto dell'utente. Su iOS la prima
+   * `speak()` e' consentita solo durante un'attivazione: fuori da quella
+   * finestra l'enunciato viene scartato in silenzio - nessun suono, nessun
+   * errore, nemmeno `onstart`. E' cio' che sull'iPhone faceva riconoscere il
+   * comando senza pronunciare la risposta.
+   */
+  prime?(): void;
   /** Interrompe cio' che e' in corso, es. allo STOP. */
   cancel(): void;
 }
@@ -28,6 +38,9 @@ export class SilentSpeechProvider implements SpeechProvider {
   readonly id = 'silent';
   isSupported(): boolean {
     return false;
+  }
+  prime(): void {
+    /* niente da sbloccare */
   }
   speak(_text: string, onDone?: () => void): void {
     // Nessuna voce disponibile: l'enunciato finisce subito, cosi' chi

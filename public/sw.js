@@ -51,6 +51,20 @@ const ASSET_CACHE = `roadsense-assets-${VERSION}-${BUILD}`;
 const SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {
+  // AGGIORNAMENTO AUTOMATICO.
+  //
+  // Prima il nuovo service worker restava in attesa finche' l'utente non
+  // toccava la barra "Aggiornamento disponibile". Sembra prudente, ed e' una
+  // trappola: se la versione in esecuzione non riesce ad aprire la pagina -
+  // com'e' successo su Chrome Android - quella barra non compare mai, e il
+  // service worker guasto resta al suo posto per sempre. L'unica via d'uscita
+  // diventava cancellare i dati del sito, che a un tester non si puo' chiedere.
+  //
+  // Con `skipWaiting` la versione nuova prende il posto della vecchia da sola,
+  // e `controllerchange` ricarica la pagina una volta. Il prezzo e' una
+  // ricarica non richiesta; il prezzo dell'alternativa era un'app che non si
+  // apre piu'.
+  self.skipWaiting();
   event.waitUntil(
     caches
       .open(SHELL_CACHE)
@@ -138,10 +152,16 @@ async function navigationStrategy(request) {
   const isShell = path === '/' || path === '/index.html';
   try {
     const response = await fetch(request);
-    if (isShell) {
-      const cache = await caches.open(SHELL_CACHE);
-      cache.put('/index.html', response.clone());
-    }
+    // La copia in cache non viene ATTESA prima di rispondere.
+    //
+    // Prima si faceva `await caches.open(...)` e poi si restituiva la
+    // risposta: se lo strato di archiviazione si blocca - spazio esaurito,
+    // cache danneggiata - quella attesa non finisce mai e la navigazione resta
+    // appesa. Il browser gira all'infinito e l'app non si apre.
+    //
+    // Conservare la shell e' un'ottimizzazione; consegnare la pagina e' il
+    // compito. Non devono dipendere l'una dall'altro.
+    if (isShell) void memorizza(SHELL_CACHE, '/index.html', response.clone());
     return response;
   } catch {
     const cached = isShell
@@ -158,16 +178,38 @@ async function navigationStrategy(request) {
 }
 
 async function cacheFirst(request, cacheName) {
-  const cached = await caches.match(request);
+  // Anche la LETTURA dalla cache ha un limite di tempo: se l'archiviazione e'
+  // in difficolta', meglio una richiesta di rete in piu' che una pagina che
+  // non si apre.
+  const cached = await conLimite(caches.match(request), null);
   if (cached) return cached;
   try {
     const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(cacheName);
-      cache.put(request, response.clone());
-    }
+    if (response.ok) void memorizza(cacheName, request, response.clone());
     return response;
   } catch {
     return new Response('', { status: 504 });
   }
+}
+
+/**
+ * Scrive in cache senza che nessuno la aspetti e senza che possa far fallire
+ * niente. Se lo spazio e' esaurito, l'errore muore qui.
+ */
+async function memorizza(cacheName, key, response) {
+  try {
+    const cache = await conLimite(caches.open(cacheName), null);
+    if (cache) await cache.put(key, response);
+  } catch {
+    // Spazio esaurito o cache non disponibile: si rinuncia a conservare, non
+    // a funzionare.
+  }
+}
+
+/** Il valore della promessa, oppure il ripiego se tarda troppo. */
+function conLimite(promise, ripiego, ms = 3000) {
+  return Promise.race([
+    promise.catch(() => ripiego),
+    new Promise((resolve) => setTimeout(() => resolve(ripiego), ms)),
+  ]);
 }

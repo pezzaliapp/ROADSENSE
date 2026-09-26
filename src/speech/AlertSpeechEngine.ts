@@ -37,6 +37,14 @@ export class AlertSpeechEngine {
     private handlers: SpeechEngineHandlers = {},
   ) {}
 
+  /**
+   * Sblocca la sintesi. Da chiamare dentro il gesto che attiva la voce: su iOS
+   * e' l'unico momento in cui il browser lo consente.
+   */
+  prime(): void {
+    this.provider.prime?.();
+  }
+
   /** Collega chi deve sapere quando ROAD SENSE parla. */
   setHandlers(handlers: SpeechEngineHandlers): void {
     this.handlers = handlers;

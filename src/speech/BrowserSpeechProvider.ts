@@ -30,6 +30,30 @@ export class BrowserSpeechProvider implements SpeechProvider {
   private watchdog: ReturnType<typeof setTimeout> | null = null;
   private pending: (() => void) | null = null;
 
+  /** La sintesi e' gia' stata sbloccata dentro un gesto dell'utente. */
+  private primed = false;
+
+  /**
+   * Sblocca la sintesi. Da chiamare DENTRO il gesto che attiva la voce.
+   *
+   * Si pronuncia un enunciato vuoto a volume zero: su iOS serve a consumare
+   * l'attivazione dell'utente, ed e' l'unico modo perche' le chiamate
+   * successive - che avvengono dopo un comando vocale, quindi senza gesto -
+   * vengano davvero eseguite. Altrove non fa nulla di percepibile.
+   */
+  prime(): void {
+    if (this.primed || !this.isSupported()) return;
+    this.primed = true;
+    try {
+      const sblocco = new SpeechSynthesisUtterance(' ');
+      sblocco.volume = 0;
+      sblocco.lang = SPEECH.lang;
+      window.speechSynthesis.speak(sblocco);
+    } catch {
+      // Se non si puo' sbloccare, si prova comunque a parlare piu' avanti.
+    }
+  }
+
   isSupported(): boolean {
     return (
       typeof window !== 'undefined' &&
@@ -57,8 +81,13 @@ export class BrowserSpeechProvider implements SpeechProvider {
       utterance.onend = () => this.settle();
       utterance.onerror = () => this.settle();
       // Un avviso vecchio non deve accodarsi a uno nuovo: in auto conta
-      // l'ultimo, non la coda.
-      window.speechSynthesis.cancel();
+      // l'ultimo, non la coda. Ma si annulla SOLO se c'e' davvero qualcosa in
+      // corso: su iOS una `cancel()` a vuoto puo' lasciare il sintetizzatore
+      // in uno stato in cui la `speak()` immediatamente successiva viene
+      // scartata senza un suono e senza un errore.
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+      }
       window.speechSynthesis.speak(utterance);
       // Rete di sicurezza: se `end` non arriva, si chiude lo stesso.
       this.watchdog = setTimeout(() => this.settle(), estimatedSpeechMs(text));

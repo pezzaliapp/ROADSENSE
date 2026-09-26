@@ -350,3 +350,44 @@ describe('service worker / le cache vecchie vengono davvero rimosse', () => {
     expect(trovato).toBe(true);
   });
 });
+
+describe('service worker / una vecchia installazione si aggiorna DA SOLA', () => {
+  /**
+   * Su Chrome Android, sul Fold, la pagina girava all'infinito. Sullo stesso
+   * telefono Samsung Internet - che ha archiviazione separata, quindi nessun
+   * service worker precedente - funzionava. La differenza non era la rete: era
+   * la versione vecchia rimasta in controllo.
+   *
+   * Restava in controllo perche' la nuova aspettava che l'utente toccasse la
+   * barra "Aggiornamento disponibile". Barra che, con la pagina che non si
+   * apre, non compare mai. L'unica uscita era cancellare i dati del sito: a un
+   * tester non si puo' chiedere.
+   */
+  it('la nuova versione non aspetta il permesso dell utente', () => {
+    const src = readFileSync(SW_PATH, 'utf8');
+    const install = src.slice(src.indexOf("addEventListener('install'"));
+    expect(install.slice(0, install.indexOf('});'))).toContain('self.skipWaiting()');
+  });
+
+  it('prende il controllo dei client gia aperti', () => {
+    const src = readFileSync(SW_PATH, 'utf8');
+    expect(src).toContain('self.clients.claim()');
+  });
+
+  it('una cache bloccata non impedisce piu di aprire la pagina', async () => {
+    // Se l'archiviazione si blocca - spazio esaurito, cache danneggiata - la
+    // navigazione restava appesa perche' si ATTENDEVA la scrittura prima di
+    // rispondere. Ora la pagina si consegna e la cache si arrangia.
+    const bloccata = boot();
+    bloccata.storage.open = () => new Promise(() => undefined); // non risolve mai
+    const risposta = await bloccata.navigate('/');
+    expect(risposta?.body).toBe('rete:/');
+  });
+
+  it('una lettura di cache bloccata non impedisce di servire un asset', async () => {
+    const bloccata = boot();
+    bloccata.storage.match = () => new Promise(() => undefined);
+    const risposta = await bloccata.request('/assets/index-abc.js');
+    expect(risposta?.body).toBe('rete:/assets/index-abc.js');
+  }, 10_000);
+});
