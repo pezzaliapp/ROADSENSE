@@ -2,7 +2,9 @@
 node_modules/
 
 # build
-dist/
+# Solo alla radice: `vendor/*/dist/` contiene decoder ricompilati da noi, che
+# vanno versionati - senza, la voce non funziona per nessun altro.
+/dist/
 dist-ssr/
 *.local
 

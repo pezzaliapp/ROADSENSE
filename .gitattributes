@@ -1,2 +1,7 @@
-* text=auto eol=lf
-*.png binary
+# Il decoder Vosk in `vendor/` e' uscita di un compilatore, non sorgente:
+# nessuna normalizzazione dei fine riga. I byte versionati devono essere
+# esattamente quelli verificati a runtime.
+vendor/vosk-browser/dist/** -text
+
+# Anche i pezzi del modello vocale sono dati binari.
+public/assets/model/** -text binary

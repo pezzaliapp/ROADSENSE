@@ -104,18 +104,41 @@ describe('CSP / nulla e stato rimosso e nessun dominio aggiunto', () => {
   });
 });
 
-describe('CSP / la policy effettiva di ROAD SENSE non e cambiata', () => {
-  it('il meta di index.html NON consente WebAssembly', () => {
-    // Header e meta vengono applicati entrambi: basta che uno dei due neghi.
-    const script = directive(metaCsp, 'script-src');
-    expect(script).toBe("script-src 'self'");
-    expect(script).not.toContain('wasm-unsafe-eval');
+describe('CSP / header e meta sono ALLINEATI', () => {
+  /**
+   * Prima il meta di `index.html` era piu' stretto dell'header, e sostenevo
+   * che questo "conteneva" l'allargamento senza toccare l'applicazione. Era
+   * vero, ed e' esattamente cio' che ha impedito a ROAD SENSE di usare Vosk:
+   * il worker nasce dal documento e eredita l'INTERSEZIONE delle due policy,
+   * quindi `'wasm-unsafe-eval'` e `blob:` venivano annullati dal meta e
+   * WebAssembly non riusciva nemmeno a compilare.
+   *
+   * Due policy che differiscono sono una trappola: quella scritta nell'header
+   * sembra in vigore e non lo e'. Ora devono coincidere, e questi test lo
+   * impongono.
+   */
+  it('script-src e connect-src coincidono fra header e meta', () => {
+    expect(directive(metaCsp, 'script-src')).toBe(directive(headerCsp, 'script-src'));
+    expect(directive(metaCsp, 'connect-src')).toBe(directive(headerCsp, 'connect-src'));
   });
 
-  it('il meta di index.html NON consente blob: in connect-src', () => {
-    const connect = directive(metaCsp, 'connect-src');
-    expect(connect.length).toBeGreaterThan(0);
-    expect(connect).not.toContain('blob:');
+  it('il meta consente WebAssembly, che serve al decoder locale', () => {
+    expect(directive(metaCsp, 'script-src')).toContain("'wasm-unsafe-eval'");
+  });
+
+  it('il meta consente blob:, che serve al modello ricomposto nel dispositivo', () => {
+    expect(directive(metaCsp, 'connect-src')).toContain('blob:');
+  });
+
+  it('NESSUNA delle due policy consente unsafe-eval', () => {
+    // E' il motivo per cui il decoder e' stato ricompilato invece di allargare
+    // la policy: `'unsafe-eval'` avrebbe concesso la generazione di codice da
+    // stringa all'intera origine.
+    for (const [nome, csp] of [['header', headerCsp], ['meta', metaCsp]] as const) {
+      expect(directive(csp, 'script-src'), `${nome} consente unsafe-eval`).not.toMatch(
+        /(^|[^-])'unsafe-eval'/,
+      );
+    }
   });
 
   it('il laboratorio non porta un meta CSP, quindi per lui vale l header', () => {

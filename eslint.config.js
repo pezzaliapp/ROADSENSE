@@ -4,7 +4,11 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
-  { ignores: ['dist', 'node_modules', 'coverage'] },
+  {
+    // `vendor/` contiene codice di terze parti ricompilato da noi ma non
+    // scritto da noi: si versiona l'uscita del compilatore, non la si corregge.
+    ignores: ['dist', 'node_modules', 'coverage', 'vendor'],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

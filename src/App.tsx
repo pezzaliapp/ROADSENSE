@@ -160,10 +160,11 @@ export default function App() {
    * sta succedendo qualcosa invece di vedere un pulsante che non risponde.
    * Scaricati una volta, restano nella cache del browser.
    */
-  const [voiceModel, setVoiceModel] = useState<{ phase: VoiceModelPhase; percent: number }>({
-    phase: 'assente',
-    percent: 0,
-  });
+  const [voiceModel, setVoiceModel] = useState<{
+    phase: VoiceModelPhase;
+    percent: number;
+    reason: string | null;
+  }>({ phase: 'assente', percent: 0, reason: null });
 
   /**
    * Diagnosi della catena vocale. Esiste solo con ?debugVoice=1 e non lascia
@@ -1025,8 +1026,12 @@ export default function App() {
     provider.start({
       onTranscript: handleTranscript,
       onStatus: handleVoiceStatus,
-      onModelProgress: (phase, progress) =>
-        setVoiceModel({ phase, percent: Math.round((progress?.ratio ?? 0) * 100) }),
+      onModelProgress: (phase, progress, reason) =>
+        setVoiceModel({
+          phase,
+          percent: Math.round((progress?.ratio ?? 0) * 100),
+          reason: reason ?? null,
+        }),
       ...(voiceDebug ? { onDiagnostics: pushDiagnostics } : {}),
     });
   }, [
@@ -1150,10 +1155,16 @@ export default function App() {
           <strong>VOCE QUASI PRONTA.</strong> Ultimi secondi.
         </div>
       )}
+      {/* Il MOTIVO, non solo l'esito.
+          Un messaggio generico ha gia' nascosto una volta un errore esplicito,
+          ed e' costato un test su strada e un'intera sessione di riproduzione.
+          Non e' un pannello diagnostico: e' una riga, e compare solo quando
+          qualcosa e' andato storto davvero. */}
       {!demo && voiceModel.phase === 'errore' && (
         <div className="mic-bar" role="alert">
-          <strong>VOCE NON DISPONIBILE.</strong> Il riconoscimento vocale non si e' caricato. Il
-          resto di ROAD SENSE funziona: usa il pulsante SEGNALA.
+          <strong>VOCE NON DISPONIBILE.</strong> Il resto di ROAD SENSE funziona: usa il pulsante
+          SEGNALA.
+          {voiceModel.reason && <> Motivo: {voiceModel.reason.slice(0, 160)}</>}
         </div>
       )}
 

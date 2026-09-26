@@ -565,6 +565,23 @@ describe('consenso all\'elaborazione remota dell\'audio', () => {
     expect(provider).not.toContain('SpeechRecognition');
   });
 
+  it('quando la voce fallisce, il banner dice il MOTIVO reale', () => {
+    // Un messaggio generico ha gia' nascosto una volta un errore esplicito
+    // ("WebAssembly.instantiate() violates ... script-src 'self'"), ed e'
+    // costato un test su strada e un'intera riproduzione in locale. Il motivo
+    // arriva dal provider e viene mostrato: non e' un pannello diagnostico,
+    // e' una riga che compare solo quando qualcosa e' andato storto davvero.
+    expect(app).toMatch(/voiceModel\.reason/);
+    expect(app).toMatch(/Motivo:/);
+    // E il motivo deve nascere nel provider, non essere inventato dall'interfaccia.
+    const provider = readFileSync(
+      resolve(ROOT, 'src', 'voice', 'local', 'VoskVoiceProvider.ts'),
+      'utf8',
+    );
+    expect(provider).toMatch(/setModelPhase\('errore', null, motivo\)/);
+    expect(provider).toMatch(/reason\?: string \| null/);
+  });
+
   it('il primo scaricamento del modello e dichiarato a chi guida', () => {
     // 47 MB: senza avviso il pulsante VOCE sembrerebbe non rispondere.
     expect(app).toMatch(/PREPARAZIONE VOCE/);

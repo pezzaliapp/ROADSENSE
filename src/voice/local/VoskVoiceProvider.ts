@@ -65,8 +65,22 @@ const PRE_ROLL_MS = 400;
 export type VoiceModelPhase = 'assente' | 'scaricamento' | 'preparazione' | 'pronto' | 'errore';
 
 export interface VoskVoiceHandlers extends VoiceHandlers {
-  /** Avanzamento del primo scaricamento del modello. */
-  onModelProgress?: (phase: VoiceModelPhase, progress: ModelProgress | null) => void;
+  /**
+   * Avanzamento del primo scaricamento del modello, e - quando fallisce - il
+   * MOTIVO.
+   *
+   * `reason` non e' un lusso diagnostico. La prima volta che questa catena si e'
+   * rotta in produzione, l'errore vero esisteva, era esplicito e diceva
+   * esattamente cosa fare; e' stato calcolato, formattato e buttato via, perche'
+   * arrivava solo a `onDiagnostics`, collegato unicamente con ?debugVoice=1.
+   * Al suo posto e' rimasto un banner generico, e sono serviti un test su
+   * dispositivo e un'intera riproduzione in locale per ritrovarlo.
+   */
+  onModelProgress?: (
+    phase: VoiceModelPhase,
+    progress: ModelProgress | null,
+    reason?: string | null,
+  ) => void;
 }
 
 export class VoskVoiceProvider implements VoiceProvider {
@@ -83,6 +97,7 @@ export class VoskVoiceProvider implements VoiceProvider {
   private sampleRate = DEFAULT_GATE.sampleRate;
   private modelUrl: string | null = null;
   private modelPhase: VoiceModelPhase = 'assente';
+  private lastError_: string | null = null;
   /** ROAD SENSE sta parlando: il cancello non deve sentire la propria voce. */
   private speaking = false;
 
@@ -209,8 +224,9 @@ export class VoskVoiceProvider implements VoiceProvider {
       this.report({ phase: 'listening' });
       this.emit('listening');
     } catch (error) {
-      this.setModelPhase('errore', null);
-      this.report({ lastError: messaggio(error), phase: 'error' });
+      const motivo = messaggio(error);
+      this.setModelPhase('errore', null, motivo);
+      this.report({ lastError: motivo, phase: 'error' });
       this.emit('error');
     }
   }
@@ -271,9 +287,19 @@ export class VoskVoiceProvider implements VoiceProvider {
     }
   }
 
-  private setModelPhase(phase: VoiceModelPhase, progress: ModelProgress | null): void {
+  /** Motivo dell'ultimo fallimento del modello, per chi lo deve mostrare. */
+  lastError(): string | null {
+    return this.lastError_;
+  }
+
+  private setModelPhase(
+    phase: VoiceModelPhase,
+    progress: ModelProgress | null,
+    reason: string | null = null,
+  ): void {
     this.modelPhase = phase;
-    this.handlers.onModelProgress?.(phase, progress);
+    this.lastError_ = reason;
+    this.handlers.onModelProgress?.(phase, progress, reason);
   }
 
   private emit(status: VoiceStatus): void {
