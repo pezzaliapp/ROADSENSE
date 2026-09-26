@@ -137,9 +137,16 @@ describe('il laboratorio e isolato da ROAD SENSE', () => {
     }
   });
 
-  it('importa solo cio che gli serve: moduli locali, config e il contratto voce', () => {
+  it('importa solo cio che gli serve: moduli locali, config, lessico e contratto voce', () => {
     const ammessi = new Set([
       'vosk-browser',
+      // Il LESSICO e' lecito, ed e' una dipendenza voluta: la grammatica del
+      // decoder si DERIVA da li' (`grammarSource.ts`), invece di essere un
+      // secondo elenco di parole che divergeva dal parser. E' dati piu'
+      // `normalize()`: nessuna logica di decisione entra nella catena vocale.
+      // La LOGICA del parser resta vietata - `parseVoiceReport` e' fra i nomi
+      // proibiti qui sopra - perche' la voce consegna testo e non decide nulla.
+      '../lexicon',
       '../voice/local/grammar',
       '../voice/local/micSession',
       '../voice/local/ringBuffer',

@@ -17,6 +17,8 @@ export const LANE_LABEL: Record<RoadLane, string> = {
   first_lane: 'in prima corsia',
   second_lane: 'in seconda corsia',
   third_lane: 'in terza corsia',
+  fourth_lane: 'in quarta corsia',
+  fifth_lane: 'in quinta corsia',
   driving_lane: 'in corsia di marcia',
   central_lane: 'in corsia centrale',
   overtaking_lane: 'in corsia di sorpasso',

@@ -217,7 +217,15 @@ ui.modelHint.textContent =
   'Il campo URL e’ un’alternativa diagnostica e puo’ restare vuoto.';
 
 log('Pagina pronta. Nessun microfono aperto.');
-log(`Grammatica: ${VOICE_GRAMMAR.join(' / ')}`);
+// La grammatica non e' piu' un pugno di parole da stampare per intero: e'
+// derivata dal lessico del parser e conta centinaia di voci. Qui serve la
+// misura, non l'elenco.
+const terminiGrammatica = VOICE_GRAMMAR.filter((v) => !v.includes(' ') && v !== '[unk]');
+const semiGrammatica = VOICE_GRAMMAR.filter((v) => v.includes(' '));
+log(
+  `Grammatica: ${terminiGrammatica.length} termini + ${semiGrammatica.length} frasi-seme + [unk]` +
+    ` (es. ${terminiGrammatica.slice(0, 6).join(', ')}...)`,
+);
 
 // ---------------------------------------------------------------------------
 // START / STOP

@@ -30,15 +30,21 @@
  * GRAMMATICA
  *
  * Il modello piccolo italiano ha un tasso d'errore intorno al 17% in dettatura
- * libera, che per una frase qualunque e' molto, ma qui non si detta: si
- * pronuncia una parola fra quattro. Vincolare l'uscita a quelle quattro piu'
- * `[unk]` cambia completamente il problema.
+ * libera, che per una frase qualunque e' molto, ma qui non si detta: si parla
+ * della strada. Vincolare l'uscita al vocabolario di ROAD SENSE cambia
+ * completamente il problema.
+ *
+ * L'elenco NON e' scritto a mano: `grammar.ts` lo deriva dal lessico del parser
+ * e lo filtra sul vocabolario reale del modello. Prima erano due elenchi
+ * indipendenti, e divergevano: il parser conosceva 39 pericoli, la grammatica
+ * ne ammetteva quattro, e le altre trentacinque categorie erano codice che
+ * nessuna voce poteva raggiungere.
  *
  * `[unk]` e' il punto meno ovvio e il piu' importante: senza di lui il decoder
- * e' OBBLIGATO a scegliere la meno improbabile fra le quattro parole, anche
+ * e' OBBLIGATO a scegliere la meno improbabile fra le parole note, anche
  * davanti a un colpo di tosse o alla radio. Con `[unk]` gli si concede di dire
- * "non era nessuna delle quattro", che e' la risposta giusta per quasi tutto
- * cio' che accade in un abitacolo.
+ * "non era nessuna di queste", che e' la risposta giusta per quasi tutto cio'
+ * che accade in un abitacolo.
  */
 
 import { Model, type KaldiRecognizer } from 'vosk-browser';

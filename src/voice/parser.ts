@@ -24,7 +24,7 @@
 import { VOICE } from '../config/config';
 import type { HazardState, HazardSubject, RoadLane } from '../core/types';
 import type { HazardType } from '../hazard/taxonomy';
-import { HAZARD_HINTS, LANES, normalize, STATES, SUBJECTS } from './lexicon';
+import { HAZARD_HINTS, LANES, normalize, RULES, STATES, SUBJECTS } from './lexicon';
 
 export interface ParsedVoiceReport {
   hazard: HazardType;
@@ -39,86 +39,6 @@ export interface ParsedVoiceReport {
 export type VoiceParseResult =
   | { ok: true; report: ParsedVoiceReport }
   | { ok: false; reason: 'no-wake-word' | 'empty' | 'not-understood' };
-
-interface Rule {
-  hazard: HazardType;
-  /**
-   * Tutti i gruppi devono trovare una corrispondenza: ogni gruppo e' un
-   * elenco di alternative. Cosi' "camion contromano" richiede sia il mezzo
-   * sia la condizione, senza dipendere dall'ordine delle parole.
-   */
-  all: readonly (readonly string[])[];
-  subject?: HazardSubject;
-  state?: HazardState;
-}
-
-/**
- * Regole in ordine di specificita': la prima che corrisponde vince.
- * "camion contromano" deve battere "contromano" generico, e "strada
- * allagata" deve battere "acqua".
- */
-const RULES: readonly Rule[] = [
-  // --- contromano (massima specificita': cambia la categoria) --------------
-  { hazard: 'wrong_way_truck', all: [['camion', 'autocarro', 'tir', 'autoarticolato', 'bilico', 'mezzo pesante', 'autotreno'], ['contromano', 'contro mano', 'senso contrario', 'senso vietato']], subject: 'truck', state: 'wrong_way' },
-  { hazard: 'wrong_way_car', all: [['auto', 'automobile', 'macchina', 'vettura', 'veicolo', 'moto'], ['contromano', 'contro mano', 'senso contrario', 'senso vietato']], subject: 'car', state: 'wrong_way' },
-  { hazard: 'wrong_way_car', all: [['contromano', 'contro mano']] },
-
-  // --- persone e animali --------------------------------------------------
-  { hazard: 'herd_on_road', all: [['gregge', 'mandria', 'pecore', 'mucche']], subject: 'animal' },
-  { hazard: 'animals_on_road', all: [['animale', 'animali', 'cane', 'cinghiale', 'cinghiali', 'cervo', 'capriolo', 'mucca', 'cavallo']], subject: 'animal' },
-  { hazard: 'cyclist_hazard', all: [['ciclista', 'bici', 'bicicletta']], subject: 'bicycle' },
-  { hazard: 'person_on_road', all: [['uomo', 'donna', 'persona', 'pedone', 'bambino', 'gente']], subject: 'person' },
-
-  // --- veicoli ------------------------------------------------------------
-  { hazard: 'lost_load', all: [['carico perso', 'perso il carico', 'carico sulla strada', 'carico caduto']] },
-  { hazard: 'heavy_vehicle_in_difficulty', all: [['camion', 'autocarro', 'tir', 'mezzo pesante', 'autoarticolato'], ['in difficolta', 'in salita', 'bloccato', 'di traverso']], subject: 'truck' },
-  { hazard: 'broken_down_vehicle', all: [['in avaria', 'avaria', 'in panne', 'guasto', 'guasta', 'rotto', 'rotta']], state: 'broken_down' },
-  // "pericoloso" da solo NON basta: "c'e' qualcosa di pericoloso" non parla
-  // di un veicolo. Serve un mezzo nominato, oppure un'espressione che non
-  // lasci dubbi.
-  {
-    hazard: 'dangerous_vehicle_behaviour',
-    all: [
-      ['auto', 'automobile', 'macchina', 'vettura', 'camion', 'autocarro', 'tir', 'veicolo', 'mezzo', 'moto', 'furgone', 'guidatore', 'conducente'],
-      ['pericoloso', 'pericolosa', 'zigzag', 'ubriaco', 'sbanda', 'sbandando', 'contromano pericoloso'],
-    ],
-  },
-  { hazard: 'dangerous_vehicle_behaviour', all: [['guida pericolosa', 'zigzag', 'sbandando', 'ubriaco']] },
-  { hazard: 'accident', all: [['incidente', 'scontro', 'tamponamento', 'schianto', 'sinistro']] },
-  { hazard: 'stopped_vehicle', all: [['auto', 'automobile', 'macchina', 'vettura', 'camion', 'autocarro', 'tir', 'veicolo', 'mezzo', 'moto', 'furgone'], ['fermo', 'ferma', 'fermi', 'ferme', 'in sosta', 'arrestato']] },
-
-  // --- traffico ed eventi -------------------------------------------------
-  { hazard: 'blocked_toll_booth', all: [['casello', 'barriera', 'pedaggio'], ['bloccato', 'bloccata', 'chiuso', 'chiusa', 'coda', 'fermo']] },
-  { hazard: 'blocked_toll_booth', all: [['casello bloccato']] },
-  { hazard: 'demonstration', all: [['manifestazione', 'corteo', 'protesta', 'presidio']] },
-  { hazard: 'procession', all: [['processione']] },
-  { hazard: 'event_on_road', all: [['evento', 'gara', 'corsa ciclistica', 'mercato']] },
-  { hazard: 'road_closed', all: [['strada chiusa', 'chiusa la strada', 'strada sbarrata']] },
-  { hazard: 'blocked_road', all: [['strada bloccata', 'carreggiata bloccata', 'bloccata la strada']] },
-  { hazard: 'sudden_queue', all: [['coda', 'ingorgo', 'incolonnamento', 'traffico fermo', 'rallentamento']] },
-  { hazard: 'roadworks', all: [['lavori', 'cantiere', 'lavori in corso']] },
-
-  // --- strada -------------------------------------------------------------
-  { hazard: 'landslide', all: [['frana', 'smottamento']] },
-  { hazard: 'fallen_tree', all: [['albero caduto', 'albero sulla strada', 'ramo caduto', 'albero in strada']] },
-  { hazard: 'flooding', all: [['allagata', 'allagato', 'allagamento', 'strada allagata']] },
-  { hazard: 'water_on_road', all: [['acqua', 'pozzanghera', 'pozza']] },
-  { hazard: 'ice', all: [['ghiaccio', 'ghiacciata', 'ghiacciato']] },
-  { hazard: 'mud', all: [['fango', 'fangosa', 'fangoso']] },
-  { hazard: 'debris', all: [['detriti', 'sassi', 'pietre', 'vetri', 'rottami']] },
-  { hazard: 'damaged_road', all: [['strada danneggiata', 'asfalto rotto', 'strada rovinata', 'cedimento']] },
-  { hazard: 'pothole', all: [['buca', 'buche']] },
-  { hazard: 'road_surface_anomaly', all: [['fondo irregolare', 'sconnesso', 'sconnessa', 'dissestata', 'dissestato', 'asfalto brutto']] },
-  { hazard: 'generic_obstacle', all: [['ostacolo', 'oggetto sulla strada', 'oggetto in strada']] },
-
-  // --- meteo --------------------------------------------------------------
-  { hazard: 'hail', all: [['grandine', 'grandina']] },
-  { hazard: 'possible_downburst', all: [['downburst']] },
-  { hazard: 'violent_gusts', all: [['raffiche', 'vento forte', 'raffica']] },
-  { hazard: 'sudden_fog', all: [['nebbia']] },
-  { hazard: 'snow', all: [['neve', 'nevica']] },
-  { hazard: 'intense_rain', all: [['pioggia', 'diluvio', 'temporale', 'acquazzone']] },
-];
 
 /** true se una delle alternative compare nella frase come parola intera. */
 function mentions(text: string, words: readonly string[]): boolean {

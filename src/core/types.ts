@@ -162,6 +162,8 @@ export type RoadLane =
   | 'first_lane'
   | 'second_lane'
   | 'third_lane'
+  | 'fourth_lane'
+  | 'fifth_lane'
   | 'driving_lane'
   | 'central_lane'
   | 'overtaking_lane'
