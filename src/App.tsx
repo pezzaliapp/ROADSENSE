@@ -1023,11 +1023,6 @@ export default function App() {
     voiceRef.current = provider;
     // La voce parlata deve poter sospendere l'ascolto mentre parla.
     speechRef.current.setHandlers({ onSpeakingChange: handleSpeakingChange });
-    // Sblocco della sintesi DENTRO il tocco: su iOS la prima `speak()` e'
-    // consentita solo durante un'attivazione dell'utente. Gli avvisi arrivano
-    // dopo un comando vocale, quindi senza gesto: senza questa riga l'iPhone
-    // riconosce la segnalazione e non pronuncia niente, in silenzio.
-    speechRef.current.prime();
     provider.start({
       onTranscript: handleTranscript,
       onStatus: handleVoiceStatus,
