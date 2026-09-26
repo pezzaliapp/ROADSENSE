@@ -629,6 +629,104 @@ button {
 
 .type-btn .g { font-size: 22px; line-height: 1; }
 
+/* ---------- COSA POSSO DIRE ---------- */
+
+/* Il pannello puo' diventare lungo quando si apre il catalogo: scorre da solo
+   invece di spingere il pulsante CHIUDI fuori dallo schermo. */
+.sheet.guide {
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.guide-intro {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.guide-label {
+  margin: 14px 0 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.guide-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Riquadri informativi: nessun gestore, nessun cursore da pulsante. Mostrano
+   cosa si puo' DIRE, non fanno nulla se toccati. */
+.guide-chip {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.guide-more {
+  width: 100%;
+  margin-top: 16px;
+  min-height: 48px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.guide-all section { margin-bottom: 4px; }
+
+.guide-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.guide-say { font-size: 15px; }
+
+.guide-also {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.guide-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.guide-warn {
+  margin: 18px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--warn);
+}
+
+/* Accesso discreto, sopra la nota legale. */
+.guide-open {
+  display: block;
+  margin: 10px auto 0;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+}
+
 .sheet-close {
   width: 100%;
   margin-top: 12px;

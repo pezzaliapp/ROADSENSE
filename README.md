@@ -1,6 +1,6 @@
 # ROAD SENSE
 
-**v0.1.3** — Progressive Web App che usa lo smartphone come sensore stradale.
+**v0.1.4** — Progressive Web App che usa lo smartphone come sensore stradale.
 
 Autore: **Alessandro Pezzali** · Licenza: [MIT](LICENSE)
 

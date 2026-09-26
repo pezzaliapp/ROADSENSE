@@ -88,6 +88,7 @@ import { WeatherBanner } from './ui/WeatherBanner';
 import { weatherCellsToOverlays } from './ui/weatherOverlay';
 import { MapView } from './ui/MapView';
 import { ReportSheet } from './ui/ReportSheet';
+import { VoiceGuidePanel } from './ui/VoiceGuidePanel';
 import { StatusBar } from './ui/StatusBar';
 import { usePwaUpdate } from './ui/usePwaUpdate';
 import { useReducedMotion } from './ui/useReducedMotion';
@@ -178,6 +179,8 @@ export default function App() {
    * sintesi: mostra un registro gia' presente in memoria.
    */
   const [ttsTraceOpen, setTtsTraceOpen] = useState(false);
+  /** "Cosa posso dire?": si consulta da fermi, prima di partire. */
+  const [guideOpen, setGuideOpen] = useState(false);
   const [sensorDebug] = useState(isSensorDebugRequested);
   /**
    * Lo stesso valore, leggibile dentro le callback dei sensori senza
@@ -1313,12 +1316,17 @@ export default function App() {
         </button>
       </div>
 
+      <button className="guide-open" onClick={() => setGuideOpen(true)}>
+        Cosa posso dire?
+      </button>
+
       <p className="disclaimer">
         {APP.name} v{APP.version} · non sostituisce segnaletica stradale, autorita', servizi di
         emergenza o i sistemi ADAS del veicolo. Non interagire con il telefono durante la guida.
       </p>
 
       <ReportSheet open={sheetOpen} onSelect={report} onClose={() => setSheetOpen(false)} />
+      <VoiceGuidePanel open={guideOpen} onClose={() => setGuideOpen(false)} />
     </div>
   );
 }
