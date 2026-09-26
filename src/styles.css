@@ -81,6 +81,9 @@ button {
   letter-spacing: 0.06em;
   color: var(--muted);
   font-weight: 500;
+  /* Versione e commit restano su una riga: un hash spezzato a meta' non e'
+     verificabile, ed e' proprio cio' che questa riga serve a verificare. */
+  white-space: nowrap;
 }
 
 /* La riga puo' contenere fino a sei indicatori: scorre invece di troncarne

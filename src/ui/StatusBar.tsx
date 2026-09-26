@@ -3,7 +3,7 @@
  * Tre soli indicatori: GPS, SENSORI, RETE. Niente dashboard.
  */
 
-import { APP } from '../config/config';
+import { BUILD_LABEL } from '../config/config';
 import type { SystemStatus } from '../core/types';
 import type { WakeLockStatus } from './useWakeLock';
 
@@ -76,8 +76,13 @@ export function StatusBar({ status, wakeLock, running, demo, onToggleVoice }: Pr
 
   return (
     <header className="topbar">
+      {/* IDENTITA' DELLA BUILD, sempre visibile e mai da cercare.
+          Durante una prova su strada e' l'unico modo di sapere quale build si
+          ha davvero in mano: la versione da sola non basta, perche' molte
+          build diverse la dichiarano identica. Il commit lo scrive la build,
+          non una persona. */}
       <div className="brand">
-        ROAD SENSE <span className="ver">v{APP.version}</span>
+        ROAD SENSE <span className="ver">· {BUILD_LABEL}</span>
       </div>
       <div className="chips">
         {demo && <span className="chip demo">DEMO</span>}

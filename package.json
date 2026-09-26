@@ -1,6 +1,6 @@
 {
   "name": "roadsense",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "ROAD SENSE - lo smartphone come sensore stradale. PWA mobile-first, privacy by design.",
   "author": "Alessandro Pezzali",

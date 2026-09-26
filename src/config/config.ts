@@ -15,7 +15,24 @@ export const APP = {
    * finisce anche nel service worker.
    */
   version: __APP_VERSION__,
+  /**
+   * Commit breve della build, ricavato automaticamente da Vite.
+   *
+   * Esiste perche' la versione da sola non identifica una build: fra due
+   * rilasci con la stessa versione non si distingue quale si ha in mano, e
+   * durante una prova su dispositivo e' esattamente cio' che serve sapere.
+   * Un `+` finale indica modifiche non committate.
+   */
+  commit: __APP_COMMIT__,
 } as const;
+
+/**
+ * Identita' della build, come la legge una persona: `v0.1.2 · 13865f8`.
+ *
+ * Un solo posto la costruisce, cosi' interfaccia e diagnostica non possono
+ * mostrare due stringhe diverse per la stessa build.
+ */
+export const BUILD_LABEL = `v${APP.version} \u00b7 ${APP.commit}`;
 
 // ---------------------------------------------------------------------------
 // SENSORI

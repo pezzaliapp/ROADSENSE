@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -7,6 +8,48 @@ import react from '@vitejs/plugin-react';
 
 /** Unico punto di verita' per la versione: package.json. */
 const APP_VERSION: string = JSON.parse(readFileSync('./package.json', 'utf8')).version;
+
+/**
+ * IDENTITA' DELLA BUILD.
+ *
+ * Il problema che risolve: la versione da sola non basta a sapere quale build
+ * si ha in mano. Durante i test su dispositivo si apre il sito e non si
+ * distingue la build di ieri da quella di adesso, perche' due build diverse
+ * possono dichiarare la stessa versione.
+ *
+ * Il commit breve lo risolve, ed e' ricavato automaticamente: nessun hash
+ * viene scritto a mano nel sorgente. Si guarda, in ordine:
+ *
+ *   1. le variabili che il servizio di build espone da se'
+ *      (`CF_PAGES_COMMIT_SHA` su Cloudflare Pages, `GITHUB_SHA` nelle Actions);
+ *   2. il repository locale, per `npm run build` sulla propria macchina;
+ *   3. altrimenti si dichiara `sconosciuto`, senza far fallire la build - una
+ *      copia scaricata come archivio zip non ha alcun repository.
+ *
+ * Nessun servizio esterno, nessuna rete, nessun costo.
+ */
+function buildCommit(): string {
+  const daServizio = process.env.CF_PAGES_COMMIT_SHA ?? process.env.GITHUB_SHA ?? '';
+  if (daServizio.length >= 7) return daServizio.slice(0, 7);
+  try {
+    const sha = execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    // Un albero sporco NON e' il commit che dichiara di essere: senza questo
+    // segno si testerebbe una build con modifiche non committate credendola
+    // uguale a quella pubblicata.
+    const sporco = execFileSync('git', ['status', '--porcelain'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim().length > 0;
+    return sporco ? `${sha}+` : sha;
+  } catch {
+    return 'sconosciuto';
+  }
+}
+
+const APP_COMMIT: string = buildCommit();
 
 /**
  * Porta la stessa versione dentro al service worker.
@@ -36,7 +79,10 @@ function serviceWorkerVersion(): Plugin {
 // durante lo sviluppo (la geolocalizzazione richiede comunque HTTPS o localhost).
 export default defineConfig({
   plugins: [react(), serviceWorkerVersion()],
-  define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+    __APP_COMMIT__: JSON.stringify(APP_COMMIT),
+  },
   server: { host: true, port: 5173 },
   // MapLibre istanzia il proprio worker con `{ type: 'module' }`: il chunk
   // emesso da Vite deve quindi essere un modulo ES, non il formato iife
