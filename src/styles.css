@@ -845,3 +845,27 @@ button {
   color: var(--muted);
   font-size: 10.5px;
 }
+
+/* TRACCIA TTS - pannello diagnostico TEMPORANEO. Si rimuove insieme a
+   `ttsTrace.ts` e `TtsTracePanel.tsx` quando la causa su iPhone e' nota. */
+.tts-trace .vd-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tts-trace .tt-btn {
+  margin-left: auto;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.tts-trace .tt-btn + .tt-btn { margin-left: 0; }
+
+.tts-trace .vd-label { white-space: nowrap; }

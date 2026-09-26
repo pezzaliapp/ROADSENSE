@@ -12,6 +12,9 @@
 
 import { SPEECH } from '../config/config';
 import type { SpeechProvider } from './SpeechProvider';
+// STRUMENTAZIONE TEMPORANEA: solo osservazione, nessun effetto sulla sintesi.
+// Vedi `ttsTrace.ts` per il motivo e per quando va rimossa.
+import { traceTts } from './ttsTrace';
 
 /**
  * Durata stimata di un enunciato.
@@ -29,6 +32,8 @@ export class BrowserSpeechProvider implements SpeechProvider {
   readonly id = 'browser-speech';
   private watchdog: ReturnType<typeof setTimeout> | null = null;
   private pending: (() => void) | null = null;
+  /** Solo per la traccia: distingue "non partito" da "partito e non udibile". */
+  private startSeen = false;
 
   isSupported(): boolean {
     return (
@@ -49,19 +54,41 @@ export class BrowserSpeechProvider implements SpeechProvider {
     this.pending = onDone ?? null;
 
     try {
+      this.startSeen = false;
+      traceTts('request', {
+        text,
+        detail: `speaking=${window.speechSynthesis.speaking} pending=${window.speechSynthesis.pending}`,
+      });
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = SPEECH.lang;
       utterance.rate = SPEECH.rate;
       utterance.pitch = SPEECH.pitch;
       utterance.volume = SPEECH.volume;
-      utterance.onend = () => this.settle();
-      utterance.onerror = () => this.settle();
+      // `onstart` NON cambia nulla: e' l'osservabile che mancava, ed e' l'unico
+      // modo di sapere se WebKit abbia davvero avviato l'enunciato.
+      utterance.onstart = () => {
+        this.startSeen = true;
+        traceTts('start');
+      };
+      utterance.onend = () => {
+        traceTts('end');
+        this.settle();
+      };
+      utterance.onerror = (event) => {
+        traceTts('error', { detail: event?.error ?? 'sconosciuto' });
+        this.settle();
+      };
       // Un avviso vecchio non deve accodarsi a uno nuovo: in auto conta
       // l'ultimo, non la coda.
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
       // Rete di sicurezza: se `end` non arriva, si chiude lo stesso.
-      this.watchdog = setTimeout(() => this.settle(), estimatedSpeechMs(text));
+      this.watchdog = setTimeout(() => {
+        traceTts('watchdog', {
+          detail: this.startSeen ? 'era partito, nessun end' : 'NESSUN START',
+        });
+        this.settle();
+      }, estimatedSpeechMs(text));
     } catch {
       // Una sintesi che fallisce non deve mai propagare un errore a chi guida,
       // ne' lasciare l'ascolto chiuso.

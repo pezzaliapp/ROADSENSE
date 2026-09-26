@@ -92,6 +92,7 @@ import { StatusBar } from './ui/StatusBar';
 import { usePwaUpdate } from './ui/usePwaUpdate';
 import { useReducedMotion } from './ui/useReducedMotion';
 import { useWakeLock } from './ui/useWakeLock';
+import { TtsTracePanel } from './ui/TtsTracePanel';
 import { VoiceDebugPanel } from './ui/VoiceDebugPanel';
 import { SensorDebugPanel } from './ui/SensorDebugPanel';
 import { corridorDebug, type CorridorDebug } from './ui/corridorDebug';
@@ -171,6 +172,12 @@ export default function App() {
    * mai il dispositivo. Nell'interfaccia normale non viene mostrata.
    */
   const [voiceDebug] = useState(isVoiceDebugRequested);
+  /**
+   * TRACCIA TTS, TEMPORANEA: si apre toccando l'identita' della build.
+   * Serve a capire sull'iPhone se l'enunciato parta davvero. Non tocca la
+   * sintesi: mostra un registro gia' presente in memoria.
+   */
+  const [ttsTraceOpen, setTtsTraceOpen] = useState(false);
   const [sensorDebug] = useState(isSensorDebugRequested);
   /**
    * Lo stesso valore, leggibile dentro le callback dei sensori senza
@@ -597,11 +604,23 @@ export default function App() {
         // cio' che l'AlertEngine ha gia' deciso.
         const assessment = assessCluster(next.cluster, knownEvents);
         setAlertAssessment(assessment);
-        speechRef.current.announce(
+        // L'esito conta: `announce` rifiuta quando due avvisi cadono a meno di
+        // otto secondi l'uno dall'altro. Finche' nessuno conferma, il cluster
+        // resta eleggibile e `evaluate` lo ripropone al tick successivo,
+        // finche' la voce e' libera di dirlo. Ignorare questo booleano
+        // significava perdere il secondo avviso e tutti i seguenti.
+        const parlato = speechRef.current.announce(
           next.cluster.id,
           roadAlertPhrase(next.cluster, next.distanceM, assessment),
           geo.ts,
         );
+        // Senza sintesi disponibile non ci sara' MAI un "parlato": l'avviso ha
+        // gia' fatto il suo lavoro con il banner, e il cooldown deve partire
+        // lo stesso. Altrimenti lo stesso alert verrebbe riproposto a ogni
+        // aggiornamento GPS, per sempre.
+        if (parlato || !speechRef.current.isSupported()) {
+          alertRef.current.confirmSpoken(next.clusterId, geo.ts);
+        }
         if (alertTimerRef.current) clearTimeout(alertTimerRef.current);
         alertTimerRef.current = setTimeout(() => {
           roadAlertRef.current = null;
@@ -1119,6 +1138,7 @@ export default function App() {
         // Toccabile SEMPRE: una segnalazione vocale e' un gesto come premere
         // SEGNALA, e deve funzionare anche in marcia e da fermi.
         onToggleVoice={startVoice}
+        onTapBuild={() => setTtsTraceOpen((aperto) => !aperto)}
       />
 
       {updateReady && (
@@ -1169,6 +1189,7 @@ export default function App() {
       )}
 
       {/* Diagnosi: esistono solo con i rispettivi parametri nell'indirizzo. */}
+      {ttsTraceOpen && <TtsTracePanel onClose={() => setTtsTraceOpen(false)} />}
       {voiceDebug && <VoiceDebugPanel diagnostics={diagnostics} />}
       {sensorDebug && (telemetry || corridorInfo) && (
         <SensorDebugPanel

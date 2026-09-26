@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ALERT } from '../config/config';
-import { AlertEngine, isRelevant, lookaheadMeters, type DriverState } from './AlertEngine';
+import {
+  AlertEngine,
+  isRelevant,
+  lookaheadMeters,
+  type ActiveAlert,
+  type DriverState,
+} from './AlertEngine';
 import { destinationPoint } from './geo';
 import type { EventCluster } from './types';
 
@@ -101,12 +107,26 @@ describe('AlertEngine', () => {
     expect(alert?.distanceM).toBeLessThan(200);
   });
 
-  it('non ripete lo stesso alert entro il cooldown', () => {
+  it('non ripete lo stesso alert entro il cooldown, una volta pronunciato', () => {
+    // Il cooldown parte da `confirmSpoken`, non da `evaluate`: proporre non e'
+    // annunciare. Vedi `alertRetry.test.ts` per il motivo.
+    const engine = new AlertEngine();
+    const clusters = [at(150, 0)];
+    const primo = engine.evaluate(clusters, driver(), 1000);
+    expect(primo).not.toBeNull();
+    engine.confirmSpoken((primo as ActiveAlert).clusterId, 1000);
+    expect(engine.evaluate(clusters, driver(), 1000 + ALERT.cooldownMs / 2)).toBeNull();
+    expect(engine.evaluate(clusters, driver(), 1000 + ALERT.cooldownMs + 1)).not.toBeNull();
+  });
+
+  it('un alert proposto ma NON pronunciato resta eleggibile', () => {
+    // E' il difetto che si stava correggendo: senza conferma il cluster non
+    // deve consumare nulla, altrimenti l'avviso sparisce senza essere detto.
     const engine = new AlertEngine();
     const clusters = [at(150, 0)];
     expect(engine.evaluate(clusters, driver(), 1000)).not.toBeNull();
-    expect(engine.evaluate(clusters, driver(), 1000 + ALERT.cooldownMs / 2)).toBeNull();
-    expect(engine.evaluate(clusters, driver(), 1000 + ALERT.cooldownMs + 1)).not.toBeNull();
+    expect(engine.evaluate(clusters, driver(), 1001)).not.toBeNull();
+    expect(engine.evaluate(clusters, driver(), 2000)).not.toBeNull();
   });
 
   it('non genera alert quando non c\'e\' nulla di rilevante', () => {
@@ -117,7 +137,8 @@ describe('AlertEngine', () => {
   it('dimentica i cluster non piu\' esistenti', () => {
     const engine = new AlertEngine();
     const c = at(150, 0);
-    engine.evaluate([c], driver(), 1000);
+    const a = engine.evaluate([c], driver(), 1000);
+    engine.confirmSpoken((a as ActiveAlert).clusterId, 1000);
     engine.prune(new Set());
     // Dopo la potatura lo stesso cluster puo\' essere riproposto subito.
     expect(engine.evaluate([c], driver(), 1001)).not.toBeNull();

@@ -104,6 +104,26 @@ export function isRelevant(
 /**
  * Sceglie l'alert da mostrare, applicando il cooldown.
  * Mantiene lo stato minimo necessario (ultimo istante per cluster).
+ *
+ * IL COOLDOWN APPARTIENE A CHI HA PARLATO, NON A CHI PROPONE
+ *
+ * `evaluate()` proponeva un alert e nella stessa riga ne consumava il
+ * cooldown di due minuti. Ma la voce poteva rifiutarsi di pronunciarlo -
+ * `AlertSpeechEngine` impone otto secondi fra due enunciati qualsiasi - e
+ * quel rifiuto non lo sapeva nessuno: l'alert veniva mostrato, marcato come
+ * gia' annunciato e mai detto. In strada significava questo:
+ *
+ *   t=0s   "Buca tra 50 metri"      pronunciata
+ *   t=1s   "Incidente tra 40 metri" MOSTRATA, rifiutata per gli 8 secondi,
+ *                                   e bruciata per 120 secondi
+ *   t=2s   "Ostacolo tra 30 metri"  idem
+ *   t=8s   la voce sarebbe libera, ma non c'e' piu' niente da dire:
+ *          i tre cluster sono tutti in cooldown
+ *
+ * Il primo avviso parlava, gli altri sparivano. Adesso `evaluate()` si limita
+ * a proporre: finche' nessuno conferma, il candidato resta eleggibile e torna
+ * al tick successivo. Il cooldown parte da `confirmSpoken()`, cioe' da quando
+ * l'avviso e' stato davvero pronunciato.
  */
 export class AlertEngine {
   private lastAlertAt = new Map<string, number>();
@@ -130,13 +150,25 @@ export class AlertEngine {
     }
 
     if (!best) return null;
-    this.lastAlertAt.set(best.cluster.id, now);
+    // NIENTE `lastAlertAt` qui: proporre non e' annunciare. Vedi
+    // `confirmSpoken`, che e' l'unico punto in cui il cooldown comincia.
     return {
       clusterId: best.cluster.id,
       cluster: best.cluster,
       distanceM: best.distanceM,
       issuedAt: now,
     };
+  }
+
+  /**
+   * L'avviso e' stato PRONUNCIATO: da adesso parte il cooldown.
+   *
+   * Va chiamata solo quando la voce ha parlato davvero. Un alert proposto e
+   * non pronunciato non deve consumare nulla, altrimenti lo si perde: e' il
+   * difetto che questa coppia di metodi elimina.
+   */
+  confirmSpoken(clusterId: string, now: number = Date.now()): void {
+    this.lastAlertAt.set(clusterId, now);
   }
 
   /** Dimentica i cluster non piu' esistenti, per non far crescere la mappa. */

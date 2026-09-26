@@ -19,6 +19,12 @@ interface Props {
    * durante la guida non si tocca nulla, ed e' il senso di ZERO TOUCH.
    */
   onToggleVoice?: () => void;
+  /**
+   * Tocco sull'identita' della build: apre la traccia TTS.
+   * E' TEMPORANEO, e sta qui perche' su un telefono non c'e' una console e
+   * l'etichetta della build e' il posto meno invadente dove nasconderlo.
+   */
+  onTapBuild?: () => void;
 }
 
 const GPS_LABEL: Record<SystemStatus['gps'], [string, string]> = {
@@ -66,7 +72,14 @@ const NET_LABEL: Record<SystemStatus['network'], [string, string]> = {
   offline: ['bad', 'OFFLINE'],
 };
 
-export function StatusBar({ status, wakeLock, running, demo, onToggleVoice }: Props) {
+export function StatusBar({
+  status,
+  wakeLock,
+  running,
+  demo,
+  onToggleVoice,
+  onTapBuild,
+}: Props) {
   const gps = GPS_LABEL[status.gps];
   const sensors = SENSOR_LABEL[status.sensors];
   const net = NET_LABEL[status.network];
@@ -82,7 +95,10 @@ export function StatusBar({ status, wakeLock, running, demo, onToggleVoice }: Pr
           build diverse la dichiarano identica. Il commit lo scrive la build,
           non una persona. */}
       <div className="brand">
-        ROAD SENSE <span className="ver">· {BUILD_LABEL}</span>
+        ROAD SENSE{' '}
+        <span className="ver" onClick={onTapBuild}>
+          · {BUILD_LABEL}
+        </span>
       </div>
       <div className="chips">
         {demo && <span className="chip demo">DEMO</span>}
